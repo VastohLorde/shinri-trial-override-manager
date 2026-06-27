@@ -14,6 +14,10 @@ download alternative if you only want the app file. No setup wizard, install
 step, or Python is needed for either option. There's a **Tutorial** button inside
 the app.
 
+The ZIP is a clean portable app folder. It does not include preinstalled local
+override packs, personal config, build cache, or generated app cache. Use
+**Community Packs** inside the app to install approved packs.
+
 ## How it works
 Enabling a pack installs it as a **legacy addon** (`addons/ovr_<name>`). Legacy
 addon files sit *above* the server's in GMod's load order, so the override wins
