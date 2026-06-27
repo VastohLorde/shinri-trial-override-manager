@@ -16,6 +16,12 @@ The ZIP is a clean portable app folder. It does not include preinstalled local
 override packs, personal config, build cache, or generated app cache. Use
 **Community Packs** inside the app to install approved packs.
 
+There is also a **No Community Version** release ZIP:
+`GMod_Override_Manager_No_Community.zip`. Use that if the normal Community Packs
+version gets antivirus false positives or if you do not want the app to connect
+to GitHub. It has no Community Packs tab and already includes Female Shuichi,
+George Droyd K1B0, and Israel Nekomaru in `overrides/`.
+
 ## How it works
 Enabling a pack installs it as a **legacy addon** (`addons/ovr_<name>`). Legacy
 addon files sit *above* the server's in GMod's load order, so the override wins
