@@ -48,7 +48,7 @@ OLD_COMMUNITY_INDEX_URLS = {
     # Pre-rename URL: auto-migrate existing configs to the new repo path.
     "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs.json",
 }
-APP_VERSION = "1.9"
+APP_VERSION = "1.10"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -1688,7 +1688,7 @@ class App(tk.Tk):
         self.update_presence_button()
         # Non-blocking update check shortly after the window appears.
         self.after(1200, self.start_update_check)
-        if self.cfg.get("presence_enabled"):
+        if self.cfg.get("presence_enabled", True):
             try:
                 install_presence_addon(self.cfg)
             except Exception:
@@ -2756,7 +2756,7 @@ class App(tk.Tk):
             self.refresh()
 
     def presence_loop(self):
-        if not self.cfg.get("presence_enabled"):
+        if not self.cfg.get("presence_enabled", True):
             self._presence_running = False
             return
         try:
@@ -2774,10 +2774,10 @@ class App(tk.Tk):
 
     def update_presence_button(self):
         self.presence_btn_text.set(
-            "Community Presence: ON" if self.cfg.get("presence_enabled") else "Community Presence: OFF")
+            "Community Presence: ON" if self.cfg.get("presence_enabled", True) else "Community Presence: OFF")
 
     def toggle_presence(self):
-        on = not self.cfg.get("presence_enabled")
+        on = not self.cfg.get("presence_enabled", True)
         self.cfg["presence_enabled"] = on
         save_config(self.cfg)
         self.update_presence_button()

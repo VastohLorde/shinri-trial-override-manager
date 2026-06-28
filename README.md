@@ -120,12 +120,12 @@ This is why, for example, a 3-outfit model lands on a character whose matching s
 also has 3 options, instead of one that caps it at 2.
 
 ## Community Presence (see other users in-game)
-Click **Community Presence** to turn on a client-side, opt-in feature that lets
-Override Manager users on the same server find each other and share **community**
-packs. When on, it installs a small client-side addon that quietly broadcasts which
-community overrides you have enabled (and the character each targets). Other users
-type **`!ovr`** (or `ovr_menu` in console) to see a list and pick which to install —
-nobody is forced to accept. Accepted packs are downloaded and enabled at the same
+**On by default** — click the **Community Presence** button to turn it off if you
+prefer. It's a client-side feature that lets Override Manager users on the same
+server find each other and share **community** packs. When on, it installs a small
+client-side addon that quietly broadcasts which community overrides you have enabled
+(and the character each targets). Other users type **`!ovr`** (or `ovr_menu` in
+console) to see a list and pick which to install — nobody is forced to accept. Accepted packs are downloaded and enabled at the same
 target the other player used, and you're prompted to reconnect to apply them.
 
 Safety: it only ever offers/installs packs that are in the approved Community Packs
