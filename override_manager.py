@@ -48,7 +48,7 @@ OLD_COMMUNITY_INDEX_URLS = {
     # Pre-rename URL: auto-migrate existing configs to the new repo path.
     "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs.json",
 }
-APP_VERSION = "1.12"
+APP_VERSION = "1.13"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -1626,11 +1626,24 @@ timer.Create("ovr_presence_status", 4, 0, function()
     end
 end)
 
-hook.Add("InitPostEntity", "ovr_presence_join", function() timer.Simple(8, broadcast) end)
+local announcedReady = false
+local function announceReady()
+    if announcedReady then return end
+    announcedReady = true
+    print("[Override Manager] Community Presence active. Console command: ovr_menu")
+    notify("Community Presence active. Open the menu with console command \"ovr_menu\" (or type !ovr in chat).")
+end
+
+hook.Add("InitPostEntity", "ovr_presence_join", function()
+    timer.Simple(8, broadcast)
+    timer.Simple(10, announceReady)
+end)
 timer.Create("ovr_presence_rebroadcast", 180, 0, broadcast)
 concommand.Add("ovr_share", broadcast)
 concommand.Add("ovr_menu", function() loadManifest() rebuildPanel() end)
 loadManifest()
+-- If the addon loads after we're already spawned in, still confirm shortly.
+timer.Simple(6, function() if LocalPlayer and IsValid(LocalPlayer()) then announceReady() end end)
 """
 
 
@@ -2804,10 +2817,13 @@ class App(tk.Tk):
             messagebox.showinfo(
                 "Community Presence",
                 "Community Presence is ON.\n\n"
-                "In game, other Override Manager users broadcast their COMMUNITY overrides. Type !ovr in chat "
-                "to see them and choose which to install - you're never forced to accept.\n\n"
-                "Keep this app open so accepted installs can finish. After installing you'll be asked to "
-                "reconnect to the server to see the change.")
+                "IMPORTANT: fully restart GMod once so the in-game part loads (addons only load when GMod "
+                "starts, not when you reconnect). You'll then see a blue \"Community Presence active\" message "
+                "in chat when you spawn.\n\n"
+                "To see other users and choose what to install, open the menu with the console command "
+                "ovr_menu (most reliable), or type !ovr in chat. You're never forced to accept.\n\n"
+                "Keep this app open so accepted installs can finish; you'll then be asked to reconnect to "
+                "apply them.")
         else:
             try:
                 remove_presence_addon(self.cfg)
