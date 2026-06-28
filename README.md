@@ -65,6 +65,30 @@ overrides/
 }
 ```
 
+## Override Maker (build a pack in-app)
+Don't want to assemble a pack folder by hand? Click **Override Maker** to build one
+from local model files through a guided form. It writes a ready-to-use pack into
+`overrides/` (hit **Refresh** to see it), with all the correct in-game paths and an
+`override.json` filled in for you.
+
+What the form covers:
+
+- **Pack name / Skin / Description** — the text shown in the main list.
+- **Character to override** — the Shinri Trial character whose slot the pack fills.
+  Picking one auto-fills the matching **Sprite folder**.
+- **Workshop link** — paste a Steam Workshop URL or ID and click **Load**. If the
+  item isn't already downloaded, the maker can fetch it with SteamCMD, extract the
+  GMA, and let you pick which `.mdl` to use (it sets the material root for you).
+- **Main model / Arms model** — browse to the `.mdl` files. Choosing the main model
+  auto-detects the **Material root** (the folder that contains `materials/`).
+- **Manual sprite assignments** — drop your own `.vtf`/`.vmt` files into individual
+  courtroom sprite slots (talk, objection, scrum debate, door, and more); add as
+  many slots per category as you need.
+
+Click **Create Override** and the pack is generated — model, materials, and sprites
+copied to the right paths. From there it behaves like any other pack: pick a target,
+enable it, or share it through Community Packs.
+
 ## Community Packs
 Click **Community Packs** to browse the online JSON index of downloadable
 override packs. Pick a pack, click **Install Selected**, then enable it from the
@@ -134,12 +158,17 @@ My Override/
   lua/...
 ```
 
-## Included packs
+## Community packs
+Available from the **Community Packs** menu inside the app:
+
 | Override | Character | Skin |
 |---|---|---|
 | Female Shuichi | Shuichi Saihara | Female model + sprites |
 | George Droyd K1B0 | K1-B0 / K1B0 | George Droyd model + sprites |
 | Israel Nekomaru | Nekomaru Nidai | Israel skin + sprites |
+| Hoshino Himiko | Himiko Yumeno | Hoshino model + sprites |
+| Shiroko Mahiru | Mahiru Koizumi | Shiroko model + sprites |
+| Shiroko Terror Kirumi | Kirumi Tojo | Shiroko Terror model + sprites |
 
 ## Notes
 - Needs the base addon for that character (e.g. the Danganronpa PlayerModels
