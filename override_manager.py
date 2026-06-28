@@ -765,6 +765,125 @@ def pack_folder_name(name):
     return cleaned or "Community Pack"
 
 
+MODEL_SIDECAR_EXTS = (".mdl", ".vvd", ".phy", ".dx90.vtx", ".sw.vtx", ".ani")
+
+SPRITE_SLOTS = [
+    ("Talk 1", "ct_sprite_1.vtf"),
+    ("Talk 2", "ct_sprite_2.vtf"),
+    ("Talk 3", "ct_sprite_3.vtf"),
+    ("Argue 1", "ct_argue_1.vtf"),
+    ("Argue 2", "ct_argue_2.vtf"),
+    ("Consent", "ct_consent.vtf"),
+    ("Scrum Debate Left", "ct_scrum_left.vtf"),
+    ("Scrum Debate Right", "ct_scrum_right.vtf"),
+]
+
+
+def copy_model_sidecars(src_mdl, dest_base, output_dir):
+    src_mdl = os.path.abspath(src_mdl or "")
+    if not os.path.isfile(src_mdl):
+        raise ValueError("Selected model file does not exist.")
+    if os.path.splitext(src_mdl)[1].lower() != ".mdl":
+        raise ValueError("Main model must be a .mdl file.")
+    dest_base = safe_game_path(dest_base, allow_empty=False, strip_ext=True)
+    src_base, _ = os.path.splitext(src_mdl)
+    copied = []
+    for ext in MODEL_SIDECAR_EXTS:
+        src = src_base + ext
+        if not os.path.exists(src):
+            continue
+        dest = os.path.join(output_dir, *dest_base.split("/")) + ext
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy2(src, dest)
+        copied.append(dest)
+    if not copied:
+        raise ValueError("No model files were copied.")
+    return copied
+
+
+def copy_material_root(material_root, output_dir):
+    if not material_root:
+        return False
+    material_dir = os.path.join(material_root, "materials")
+    if not os.path.isdir(material_dir):
+        return False
+    dest = os.path.join(output_dir, "materials")
+    if os.path.isdir(dest):
+        shutil.rmtree(dest)
+    shutil.copytree(material_dir, dest)
+    return True
+
+
+def validate_sprite_assignment(path):
+    if not os.path.isfile(path):
+        raise ValueError(f"Selected sprite file does not exist: {path}")
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in (".vtf", ".vmt"):
+        raise ValueError("Sprite files must be game-ready .vtf or .vmt files.")
+
+
+def copy_sprite_assignments(assignments, sprite_dir, output_dir):
+    copied = []
+    if not assignments:
+        return copied
+    sprite_dir = safe_game_path(sprite_dir, allow_empty=False)
+    for _label, item in assignments.items():
+        src = item.get("path") if isinstance(item, dict) else ""
+        filename = item.get("filename") if isinstance(item, dict) else ""
+        if not src:
+            continue
+        validate_sprite_assignment(src)
+        if not filename or "/" in filename or "\\" in filename:
+            raise ValueError("Sprite destination filename is invalid.")
+        dest = os.path.join(output_dir, *sprite_dir.split("/"), filename)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy2(src, dest)
+        copied.append(dest)
+    return copied
+
+
+def create_override_pack(options):
+    name = str(options.get("name") or "").strip()
+    if not name:
+        raise ValueError("Pack name is required.")
+    character = str(options.get("character") or "").strip() or "(unspecified)"
+    source_target = options.get("source_target") or {}
+    model_base = safe_game_path(source_target.get("model_base", ""), allow_empty=False, strip_ext=True)
+    arms_base = safe_game_path(source_target.get("arms_base", ""), allow_empty=True, strip_ext=True)
+    sprite_dir = safe_game_path(options.get("sprite_dir") or source_target.get("sprite_dir", ""), allow_empty=True)
+    overrides_dir = options.get("overrides_dir") or OVERRIDES_DIR
+    output_dir = os.path.join(overrides_dir, pack_folder_name(name))
+    if os.path.exists(output_dir):
+        raise FileExistsError(output_dir)
+    os.makedirs(overrides_dir, exist_ok=True)
+    try:
+        os.makedirs(output_dir, exist_ok=False)
+        copy_model_sidecars(options.get("main_model"), model_base, output_dir)
+        if options.get("arms_model") and arms_base:
+            copy_model_sidecars(options.get("arms_model"), arms_base, output_dir)
+        copy_material_root(options.get("material_root") or "", output_dir)
+        copy_sprite_assignments(options.get("sprite_assignments") or {}, sprite_dir, output_dir)
+        meta = {
+            "name": name,
+            "character": character,
+            "skin": str(options.get("skin") or "").strip(),
+            "description": str(options.get("description") or "").strip(),
+            "source_target": {
+                "name": source_target.get("name") or character,
+                "model_base": model_base,
+                "arms_base": arms_base,
+                "sprite_dir": sprite_dir,
+            },
+        }
+        with open(os.path.join(output_dir, "override.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+        return output_dir
+    except Exception:
+        if os.path.isdir(output_dir):
+            shutil.rmtree(output_dir, ignore_errors=True)
+        raise
+
+
 def scan_overrides():
     packs = []
     os.makedirs(OVERRIDES_DIR, exist_ok=True)

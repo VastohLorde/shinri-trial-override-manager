@@ -324,6 +324,80 @@ class RetargetingTests(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(addons, "ovr_hoshino_himiko__mukuro_ikusaba")))
         self.assertTrue(os.path.exists(os.path.join(addons, "ovr_other_pack")))
 
+    def test_create_override_pack_copies_models_materials_sprites_and_metadata(self):
+        source_root = os.path.join(self.tempdir, "source")
+        os.makedirs(os.path.join(source_root, "models", "player"), exist_ok=True)
+        os.makedirs(os.path.join(source_root, "materials", "models", "example"), exist_ok=True)
+        model = os.path.join(source_root, "models", "player", "example.mdl")
+        arms = os.path.join(source_root, "models", "player", "c_example_arms.mdl")
+        for path in (
+            model,
+            os.path.join(source_root, "models", "player", "example.vvd"),
+            os.path.join(source_root, "models", "player", "example.dx90.vtx"),
+            arms,
+            os.path.join(source_root, "models", "player", "c_example_arms.vvd"),
+        ):
+            with open(path, "wb") as f:
+                f.write(b"model")
+        with open(os.path.join(source_root, "materials", "models", "example", "body.vmt"), "wb") as f:
+            f.write(b"material")
+        sprite = os.path.join(self.tempdir, "sprite.vtf")
+        with open(sprite, "wb") as f:
+            f.write(b"sprite")
+
+        target = om.find_target({}, "Himiko Yumeno")
+        output = om.create_override_pack({
+            "name": "Maker Pack",
+            "character": "Himiko Yumeno",
+            "skin": "Local model",
+            "description": "Created by test",
+            "source_target": target,
+            "main_model": model,
+            "arms_model": arms,
+            "material_root": source_root,
+            "sprite_dir": target["sprite_dir"],
+            "sprite_assignments": {"Talk 1": {"path": sprite, "filename": "ct_sprite_1.vtf"}},
+            "overrides_dir": os.path.join(self.tempdir, "overrides"),
+        })
+
+        self.assertTrue(os.path.exists(os.path.join(output, "models/dro/player/characters3/char12/char12.mdl")))
+        self.assertTrue(os.path.exists(os.path.join(output, "models/dro/player/characters3/char12/char12.vvd")))
+        self.assertTrue(os.path.exists(os.path.join(output, "models/dro/player/characters3/char12/c_arms/char12_arms.mdl")))
+        self.assertTrue(os.path.exists(os.path.join(output, "materials/models/example/body.vmt")))
+        self.assertTrue(os.path.exists(os.path.join(output, "materials/dro/sprites/characters/dr_v3/himiko yumeno/ct_sprite_1.vtf")))
+        with open(os.path.join(output, "override.json"), "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        self.assertEqual("Maker Pack", meta["name"])
+        self.assertEqual("Himiko Yumeno", meta["character"])
+        self.assertEqual(target, meta["source_target"])
+
+    def test_create_override_pack_rejects_non_game_ready_sprite_files(self):
+        source_root = os.path.join(self.tempdir, "source")
+        os.makedirs(os.path.join(source_root, "models", "player"), exist_ok=True)
+        model = os.path.join(source_root, "models", "player", "example.mdl")
+        with open(model, "wb") as f:
+            f.write(b"model")
+        sprite = os.path.join(self.tempdir, "sprite.png")
+        with open(sprite, "wb") as f:
+            f.write(b"not vtf")
+
+        with self.assertRaises(ValueError) as cm:
+            om.create_override_pack({
+                "name": "Bad Sprite Pack",
+                "character": "Himiko Yumeno",
+                "skin": "",
+                "description": "",
+                "source_target": om.find_target({}, "Himiko Yumeno"),
+                "main_model": model,
+                "arms_model": "",
+                "material_root": "",
+                "sprite_dir": "materials/dro/sprites/characters/dr_v3/himiko yumeno",
+                "sprite_assignments": {"Talk 1": {"path": sprite, "filename": "ct_sprite_1.vtf"}},
+                "overrides_dir": os.path.join(self.tempdir, "overrides"),
+            })
+        self.assertIn("game-ready .vtf or .vmt", str(cm.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.tempdir, "overrides", "Bad Sprite Pack")))
+
 
 if __name__ == "__main__":
     unittest.main()
