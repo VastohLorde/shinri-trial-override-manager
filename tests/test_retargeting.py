@@ -385,6 +385,34 @@ class RetargetingTests(unittest.TestCase):
         self.assertEqual("Himiko Yumeno", meta["character"])
         self.assertEqual(target, meta["source_target"])
 
+    def test_create_override_pack_uses_selected_character_as_override_target(self):
+        source_root = os.path.join(self.tempdir, "source")
+        os.makedirs(os.path.join(source_root, "models", "player"), exist_ok=True)
+        model = os.path.join(source_root, "models", "player", "example.mdl")
+        with open(model, "wb") as f:
+            f.write(b"model")
+
+        target = om.find_target({}, "Junko Enoshima (Default)")
+        output = om.create_override_pack({
+            "name": "Maker Junko Pack",
+            "character": target["name"],
+            "skin": "Local model",
+            "description": "",
+            "source_target": target,
+            "main_model": model,
+            "arms_model": "",
+            "material_root": "",
+            "sprite_dir": target["sprite_dir"],
+            "sprite_assignments": {},
+            "overrides_dir": os.path.join(self.tempdir, "overrides"),
+        })
+
+        self.assertTrue(os.path.exists(os.path.join(output, "models/dro/player/characters1/char9/char9.mdl")))
+        with open(os.path.join(output, "override.json"), "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        self.assertEqual("Junko Enoshima (Default)", meta["character"])
+        self.assertEqual(target["model_base"], meta["source_target"]["model_base"])
+
     def test_create_override_pack_rejects_non_game_ready_sprite_files(self):
         source_root = os.path.join(self.tempdir, "source")
         os.makedirs(os.path.join(source_root, "models", "player"), exist_ok=True)

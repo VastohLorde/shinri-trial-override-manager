@@ -1226,7 +1226,7 @@ class App(tk.Tk):
 
         pack_name = tk.StringVar()
         skin = tk.StringVar(value="Local model + sprites")
-        source_name = tk.StringVar(value="Himiko Yumeno")
+        override_target_name = tk.StringVar(value="Himiko Yumeno")
         model_path = tk.StringVar()
         arms_path = tk.StringVar()
         material_root = tk.StringVar()
@@ -1275,7 +1275,7 @@ class App(tk.Tk):
             return frame
 
         def update_source(_event=None):
-            target = find_target(self.cfg, source_name.get())
+            target = find_target(self.cfg, override_target_name.get())
             if target:
                 sprite_dir.set(target.get("sprite_dir", ""))
 
@@ -1307,10 +1307,10 @@ class App(tk.Tk):
 
         source_frame = ttk.Frame(form)
         source_frame.pack(fill="x", pady=3)
-        ttk.Label(source_frame, text="Source character", width=18).pack(side="left")
+        ttk.Label(source_frame, text="Character to override", width=18).pack(side="left")
         source_combo = ttk.Combobox(
             source_frame,
-            textvariable=source_name,
+            textvariable=override_target_name,
             state="readonly",
             values=[t["name"] for t in available_targets(self.cfg) if t["name"] != DEFAULT_TARGET_NAME],
         )
@@ -1394,9 +1394,9 @@ class App(tk.Tk):
         ttk.Label(form, textvariable=status, foreground="#a05").pack(fill="x", pady=(4, 0))
 
         def create():
-            target = find_target(self.cfg, source_name.get())
+            target = find_target(self.cfg, override_target_name.get())
             if not target:
-                messagebox.showerror("Override Maker", "Select a source character.", parent=win)
+                messagebox.showerror("Override Maker", "Select a character to override.", parent=win)
                 return
             assignments = {}
             for row_data in sprite_rows:
