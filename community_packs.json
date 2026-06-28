@@ -35,6 +35,15 @@
       "author": "VastohLorde",
       "description": "Replaces Himiko Yumeno with Takanashi Hoshino's playermodel and Hoshino courtroom sprites.",
       "download_url": "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs/Hoshino.Himiko.zip"
+    },
+    {
+      "name": "Shiroko Terror Kirumi",
+      "character": "Kirumi Tojo",
+      "skin": "Shiroko Terror model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Replaces Kirumi Tojo with Shiroko Terror's playermodel, courtroom sprites, and scrum debate sprites.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs/Shiroko.Terror.Kirumi.zip"
     }
   ]
 }
