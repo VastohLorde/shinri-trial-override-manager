@@ -89,6 +89,25 @@ Click **Create Override** and the pack is generated — model, materials, and sp
 copied to the right paths. From there it behaves like any other pack: pick a target,
 enable it, or share it through Community Packs.
 
+## Best Target (customization compatibility)
+In-game, a character's customization sliders (outfit bodygroups, light/skin colours,
+etc.) are driven by the **base** character the server thinks you are — so an override
+model can only use as many options *per slider* as that base character has. Extra
+outfit variants on your model are simply unreachable; skins are the exception (they
+aren't capped).
+
+Select an override and click **Best Target** to see, for every character, how much of
+your model's customization is actually reachable:
+
+- A ranked list with a **Match %** and the best slider-by-slider fit.
+- 100% means every outfit/skin option on your model can be selected; lower means some
+  options are hidden because that base character's slider has fewer positions.
+- Pick a row to see the full breakdown (e.g. *"outfit (3) → neck slider (2): 2 usable,
+  1 unreachable"*), then **Set as Target Character** to retarget to the best fit.
+
+This is why, for example, a 3-outfit model lands on a character whose matching slider
+also has 3 options, instead of one that caps it at 2.
+
 ## Community Packs
 Click **Community Packs** to browse the online JSON index of downloadable
 override packs. Pick a pack, click **Install Selected**, then enable it from the

@@ -497,5 +497,35 @@ class RetargetingTests(unittest.TestCase):
         self.assertEqual(gma, om.find_workshop_gma(gmod_path, "123"))
 
 
+class RecommenderTests(unittest.TestCase):
+    def test_bodygroup_options_capped_by_base_count(self):
+        # Shiroko's outfit (3) onto Kirumi (a 2-option group) -> only 2 reachable;
+        # onto Makoto (a 3-option group) -> all 3 reachable.
+        ov = [{"index": 3, "name": "outfit", "count": 3}]
+        kirumi = {"skins": 1, "groups": [{"index": 3, "name": "neck", "count": 2},
+                                         {"index": 4, "name": "tie", "count": 2}]}
+        makoto = {"skins": 1, "groups": [{"index": 1, "name": "body", "count": 3}]}
+        r_kirumi = om.match_override_to_profile(ov, 1, kirumi)
+        r_makoto = om.match_override_to_profile(ov, 1, makoto)
+        self.assertEqual((r_kirumi["reach"], r_kirumi["total"]), (2, 3))
+        self.assertEqual((r_makoto["reach"], r_makoto["total"]), (3, 3))
+        self.assertGreater(r_makoto["pct"], r_kirumi["pct"])
+
+    def test_skins_uncapped_but_need_base_with_multiple_skins(self):
+        # 3 override skins reach all 3 when base has >1 skin; locked to 1 when base has 1.
+        r_ok = om.match_override_to_profile([], 3, {"skins": 2, "groups": []})
+        r_locked = om.match_override_to_profile([], 3, {"skins": 1, "groups": []})
+        self.assertEqual((r_ok["reach"], r_ok["total"]), (3, 3))
+        self.assertEqual((r_locked["reach"], r_locked["total"]), (1, 3))
+
+    def test_capacity_pairs_prefers_largest_groups(self):
+        pairs = om.capacity_pairs(
+            [{"index": 0, "name": "a", "count": 3}, {"index": 1, "name": "b", "count": 2}],
+            [{"index": 0, "name": "x", "count": 2}, {"index": 1, "name": "y", "count": 4}],
+        )
+        # largest override (3) pairs with largest target (4) -> 3 reachable
+        self.assertEqual(pairs[0][2], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

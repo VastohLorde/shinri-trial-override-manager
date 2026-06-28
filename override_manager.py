@@ -47,7 +47,7 @@ OLD_COMMUNITY_INDEX_URLS = {
     # Pre-rename URL: auto-migrate existing configs to the new repo path.
     "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs.json",
 }
-APP_VERSION = "1.2"
+APP_VERSION = "1.3"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -395,6 +395,22 @@ CHARACTER_TARGETS = [
 ]
 
 
+def load_character_profiles():
+    """Per-character customization profile (configurable bodygroups + skin count),
+    baked from the stock models so the recommender works without them present."""
+    for base in (APP_DIR, os.path.dirname(os.path.abspath(__file__))):
+        path = os.path.join(base, "character_profiles.json")
+        if os.path.exists(path):
+            try:
+                return json.load(open(path, encoding="utf-8"))
+            except Exception:
+                pass
+    return {}
+
+
+CHARACTER_PROFILES = load_character_profiles()
+
+
 def load_config():
     if os.path.exists(CONFIG_PATH):
         try:
@@ -554,6 +570,85 @@ def find_known_target_mdl(target):
         if os.path.exists(path):
             return path
     return ""
+
+
+def model_skin_count(mdl_path):
+    try:
+        with open(mdl_path, "rb") as f:
+            d = f.read(228)
+        return max(1, struct.unpack_from("<i", d, 224)[0])
+    except Exception:
+        return 1
+
+
+def customizable_groups(mdl_path):
+    """Configurable bodygroups (count > 1) of a model: [{index, name, count}]."""
+    try:
+        return [{"index": int(g["index"]), "name": g["name"], "count": int(g["count"])}
+                for g in configurable_groups(parse_mdl_bodygroups(mdl_path))]
+    except Exception:
+        return []
+
+
+def pack_override_mdl(pack):
+    src = infer_source_target(pack["folder"])
+    base = src.get("model_base", "")
+    if not base:
+        return ""
+    return os.path.join(pack["folder"], *(normalize_game_path(base) + ".mdl").split("/"))
+
+
+def capacity_pairs(override_groups, target_groups):
+    """Pair each override configurable group with a target one, sorted by option
+    count descending (this maximizes total reachable options). Returns
+    [(override_group, target_group_or_None, reachable_options)]."""
+    ov = sorted(override_groups, key=lambda g: (-g["count"], g["index"]))
+    tg = sorted(target_groups, key=lambda g: (-g["count"], g["index"]))
+    pairs = []
+    for i, o in enumerate(ov):
+        t = tg[i] if i < len(tg) else None
+        reachable = min(o["count"], t["count"]) if t else 1
+        pairs.append((o, t, reachable))
+    return pairs
+
+
+def match_override_to_profile(ov_groups, ov_skins, profile):
+    """Score how well a base character can host an override model's customization.
+    Bodygroups are capped by the base group's option count; skins are uncapped but
+    only apply if the base model has more than one skin."""
+    tg = profile.get("groups", [])
+    pairs = capacity_pairs(ov_groups, tg)
+    bg_reach = sum(r for _, _, r in pairs)
+    bg_total = sum(o["count"] for o in ov_groups)
+    tsk = int(profile.get("skins", 1) or 1)
+    sk_total = ov_skins if ov_skins > 1 else 0
+    sk_reach = (ov_skins if tsk > 1 else 1) if ov_skins > 1 else 0
+    reach = bg_reach + sk_reach
+    total = bg_total + sk_total
+    return {
+        "reach": reach, "total": total,
+        "pct": (reach / total) if total else 1.0,
+        "pairs": pairs,
+        "override_skins": ov_skins, "target_skins": tsk,
+        "sk_reach": sk_reach, "sk_total": sk_total,
+    }
+
+
+def recommend_targets(pack):
+    """Rank every known character by how fully it can host this pack's customization.
+    Returns (override_profile_or_None, ranked_results)."""
+    ov_mdl = pack_override_mdl(pack)
+    if not ov_mdl or not os.path.exists(ov_mdl):
+        return None, []
+    ov_groups = customizable_groups(ov_mdl)
+    ov_skins = model_skin_count(ov_mdl)
+    results = []
+    for name, profile in CHARACTER_PROFILES.items():
+        rep = match_override_to_profile(ov_groups, ov_skins, profile)
+        rep["name"] = name
+        results.append(rep)
+    results.sort(key=lambda r: (-r["pct"], -r["reach"], r["name"]))
+    return {"groups": ov_groups, "skins": ov_skins, "mdl": ov_mdl}, results
 
 
 def lua_quote(value):
@@ -1305,6 +1400,7 @@ class App(tk.Tk):
         ttk.Button(bot, text="Open overrides folder", command=self.open_overrides).pack(side="left", padx=4)
         ttk.Button(bot, text="Override Maker", command=self.override_maker).pack(side="left")
         ttk.Button(bot, text="Community Packs", command=self.community_packs).pack(side="left")
+        ttk.Button(bot, text="Best Target", command=self.compat_report).pack(side="left")
         ttk.Button(bot, text="Refresh", command=self.refresh).pack(side="right")
         ttk.Button(bot, text="Tutorial", command=self.show_tutorial).pack(side="right", padx=4)
 
@@ -2028,6 +2124,108 @@ class App(tk.Tk):
         translate_cache.restore(gp, log=lambda *_: None)
         self.note.set("Restored cached Lua from backup (translation undone).")
         messagebox.showinfo("Undo", "Restored the original cached Lua from backup.")
+
+    # ----- Customization compatibility / best-target recommender -----
+    def compat_report(self):
+        pack = self.selected()
+        if not pack:
+            messagebox.showinfo("Best Target", "Select an override in the list first.")
+            return
+        if not CHARACTER_PROFILES:
+            messagebox.showwarning("Best Target", "Character profile data (character_profiles.json) is missing from this build.")
+            return
+        ovp, ranked = recommend_targets(pack)
+        if not ovp:
+            messagebox.showwarning("Best Target", "Couldn't read this pack's model to analyze it.")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Best Target - Customization Compatibility")
+        win.geometry("780x620")
+        win.minsize(680, 480)
+        win.transient(self)
+
+        head = ttk.Frame(win, padding=10)
+        head.pack(fill="x")
+        ttk.Label(head, text=pack["name"], font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        parts = ", ".join("%s (%d options)" % (g["name"], g["count"]) for g in ovp["groups"]) or "none"
+        ttk.Label(head, text="This model's customizable bodygroups: " + parts, foreground="#444",
+                  wraplength=740, justify="left").pack(anchor="w")
+        ttk.Label(head, text="Skins on this model: %d" % ovp["skins"], foreground="#444").pack(anchor="w")
+        ttk.Label(head, text="Match % = how many of this model's outfit/skin options are actually reachable with "
+                             "each character's in-game customization sliders. Bodygroup options are capped by the "
+                             "base character's slider; skins are not.",
+                  foreground="#777", wraplength=740, justify="left").pack(anchor="w", pady=(4, 0))
+
+        mid = ttk.Frame(win, padding=(10, 4))
+        mid.pack(fill="both", expand=True)
+        cols = ("target", "match", "parts", "skins", "map")
+        tree = ttk.Treeview(mid, columns=cols, show="headings", selectmode="browse")
+        for c, w, t in (("target", 175, "Character"), ("match", 60, "Match"),
+                        ("parts", 95, "Bodygroups"), ("skins", 70, "Skins"), ("map", 300, "Best fit")):
+            tree.heading(c, text=t)
+            tree.column(c, width=w, anchor="w")
+        tree.tag_configure("best", foreground="#1a7f1a")
+        tree.tag_configure("partial", foreground="#a06000")
+        tree.tag_configure("poor", foreground="#999999")
+        tree.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=tree.yview)
+        sb.pack(side="left", fill="y")
+        tree.configure(yscrollcommand=sb.set)
+
+        bg_total = sum(g["count"] for g in ovp["groups"])
+        rowmap = {}
+        for r in ranked:
+            pct = round(r["pct"] * 100)
+            bgmap = "; ".join("%s→%s" % (o[0]["name"], (o[1]["name"] if o[1] else "—")) for o in r["pairs"]) or "(skins only)"
+            parts_s = ("%d/%d" % (sum(p[2] for p in r["pairs"]), bg_total)) if bg_total else "—"
+            skins_s = ("%d/%d" % (r["sk_reach"], r["sk_total"])) if r["sk_total"] else "—"
+            tag = "best" if pct >= 100 else ("partial" if pct >= 50 else "poor")
+            iid = tree.insert("", "end", values=(r["name"], "%d%%" % pct, parts_s, skins_s, bgmap), tags=(tag,))
+            rowmap[iid] = r
+
+        detail = tk.StringVar(value="Select a character above to see the full breakdown.")
+        ttk.Label(win, textvariable=detail, padding=10, wraplength=740, foreground="#222", justify="left").pack(fill="x")
+
+        def on_sel(_e=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            r = rowmap[sel[0]]
+            lines = ["%s - %d%% of options reachable (%d of %d)" % (r["name"], round(r["pct"] * 100), r["reach"], r["total"])]
+            for o, t, reach in r["pairs"]:
+                if t:
+                    extra = "" if reach >= o["count"] else "   (%d option(s) unreachable)" % (o["count"] - reach)
+                    lines.append("   - %s (%d) -> %s slider (%d): %d usable%s" % (o["name"], o["count"], t["name"], t["count"], reach, extra))
+                else:
+                    lines.append("   - %s (%d): no matching slider on this character - stuck on default" % (o["name"], o["count"]))
+            if r["sk_total"]:
+                note = " (this character has only 1 skin - skin swap locked)" if r["target_skins"] <= 1 else ""
+                lines.append("   - skins: %d of %d reachable%s" % (r["sk_reach"], r["sk_total"], note))
+            detail.set("\n".join(lines))
+
+        tree.bind("<<TreeviewSelect>>", on_sel)
+
+        btns = ttk.Frame(win, padding=10)
+        btns.pack(fill="x")
+
+        def use_target():
+            sel = tree.selection()
+            if not sel:
+                return
+            self.target_var.set(rowmap[sel[0]]["name"])
+            self.on_target_change()
+            win.destroy()
+
+        ttk.Button(btns, text="Set as Target Character", command=use_target).pack(side="left")
+        ttk.Label(btns, text="(then click Enable on the main window)", foreground="#777").pack(side="left", padx=8)
+        ttk.Button(btns, text="Close", command=win.destroy).pack(side="right")
+
+        children = tree.get_children()
+        if children:
+            tree.selection_set(children[0])
+            tree.focus(children[0])
+            on_sel()
 
     # ----- Update checking / self-update -----
     def start_update_check(self, manual=False):

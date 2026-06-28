@@ -1,0 +1,1227 @@
+{
+"Akane Owari": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "skirt",
+"count": 2
+},
+{
+"index": 4,
+"name": "pocket",
+"count": 2
+},
+{
+"index": 5,
+"name": "badge",
+"count": 2
+}
+]
+},
+"Angie Yonaga": {
+"skins": 1,
+"groups": [
+{
+"index": 2,
+"name": "coat",
+"count": 2
+},
+{
+"index": 3,
+"name": "belt",
+"count": 2
+},
+{
+"index": 4,
+"name": "shoes",
+"count": 2
+}
+]
+},
+"Aoi Asahina (DR)": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "Hairclip",
+"count": 2
+},
+{
+"index": 4,
+"name": "Bandaid",
+"count": 2
+}
+]
+},
+"Byakuya Togami": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "Glasses",
+"count": 2
+},
+{
+"index": 4,
+"name": "Emblem",
+"count": 2
+},
+{
+"index": 5,
+"name": "Chain",
+"count": 2
+}
+]
+},
+"Byakuya Togami (DR2)": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "badge",
+"count": 2
+},
+{
+"index": 4,
+"name": "glasses",
+"count": 2
+},
+{
+"index": 5,
+"name": "tie",
+"count": 2
+}
+]
+},
+"Celestia Ludenberg": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "hair 2",
+"count": 2
+},
+{
+"index": 4,
+"name": "hair Bando",
+"count": 2
+},
+{
+"index": 5,
+"name": "head Ribbon",
+"count": 2
+},
+{
+"index": 6,
+"name": "Neck Ribbon",
+"count": 2
+},
+{
+"index": 7,
+"name": "earrings",
+"count": 2
+},
+{
+"index": 8,
+"name": "tie",
+"count": 2
+},
+{
+"index": 9,
+"name": "hand Ribbon",
+"count": 2
+},
+{
+"index": 10,
+"name": "skirt",
+"count": 2
+},
+{
+"index": 11,
+"name": "leg Ribbon",
+"count": 2
+}
+]
+},
+"Chiaki Nanami": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "Hair Accessories",
+"count": 2
+},
+{
+"index": 4,
+"name": "Ribbon",
+"count": 2
+},
+{
+"index": 5,
+"name": "Hoodie",
+"count": 2
+},
+{
+"index": 6,
+"name": "Bag",
+"count": 2
+},
+{
+"index": 7,
+"name": "Skirt",
+"count": 2
+},
+{
+"index": 8,
+"name": "Shoes",
+"count": 2
+}
+]
+},
+"Chihiro": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "ribbon",
+"count": 2
+},
+{
+"index": 4,
+"name": "skirt",
+"count": 2
+}
+]
+},
+"Fuyuhiko Kuzuryu": {
+"skins": 4,
+"groups": [
+{
+"index": 3,
+"name": "tie",
+"count": 2
+},
+{
+"index": 4,
+"name": "shirt",
+"count": 2
+},
+{
+"index": 5,
+"name": "badge",
+"count": 2
+},
+{
+"index": 6,
+"name": "shoes",
+"count": 2
+}
+]
+},
+"Gonta Gokuhara": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "glasses",
+"count": 2
+},
+{
+"index": 4,
+"name": "bag",
+"count": 2
+}
+]
+},
+"Gundam Tanaka": {
+"skins": 1,
+"groups": [
+{
+"index": 2,
+"name": "earring",
+"count": 2
+},
+{
+"index": 4,
+"name": "syal Front",
+"count": 2
+},
+{
+"index": 5,
+"name": "syal Back",
+"count": 2
+},
+{
+"index": 6,
+"name": "tie",
+"count": 2
+},
+{
+"index": 7,
+"name": "ring",
+"count": 2
+}
+]
+},
+"Hajime Hinata": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "tie",
+"count": 2
+},
+{
+"index": 4,
+"name": "trinket",
+"count": 2
+},
+{
+"index": 5,
+"name": "shoes",
+"count": 2
+}
+]
+},
+"Hifumi Yamada": {
+"skins": 1,
+"groups": [
+{
+"index": 2,
+"name": "bag",
+"count": 2
+},
+{
+"index": 3,
+"name": "glasses",
+"count": 2
+},
+{
+"index": 4,
+"name": "tie",
+"count": 2
+}
+]
+},
+"Himiko Yumeno": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "hat",
+"count": 2
+},
+{
+"index": 4,
+"name": "glasses",
+"count": 2
+},
+{
+"index": 5,
+"name": "hair Pin",
+"count": 2
+},
+{
+"index": 6,
+"name": "cape",
+"count": 2
+},
+{
+"index": 7,
+"name": "skirt",
+"count": 2
+}
+]
+},
+"Ibuki Mioda": {
+"skins": 4,
+"groups": [
+{
+"index": 3,
+"name": "Hair 1",
+"count": 2
+},
+{
+"index": 4,
+"name": "Hair 2",
+"count": 2
+},
+{
+"index": 5,
+"name": "Hair 3",
+"count": 2
+},
+{
+"index": 6,
+"name": "Hair 4",
+"count": 2
+},
+{
+"index": 7,
+"name": "Hair 5",
+"count": 2
+},
+{
+"index": 8,
+"name": "necklace",
+"count": 2
+},
+{
+"index": 9,
+"name": "ribbon",
+"count": 2
+},
+{
+"index": 10,
+"name": "bracelet Left",
+"count": 2
+},
+{
+"index": 11,
+"name": "bracelet Right",
+"count": 2
+},
+{
+"index": 12,
+"name": "skirt",
+"count": 2
+},
+{
+"index": 13,
+"name": "shoes",
+"count": 2
+}
+]
+},
+"Junko Enoshima (Default)": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "glasses",
+"count": 2
+},
+{
+"index": 4,
+"name": "tie",
+"count": 2
+},
+{
+"index": 6,
+"name": "skirt",
+"count": 2
+}
+]
+},
+"K1-B0": {
+"skins": 2,
+"groups": [
+{
+"index": 3,
+"name": "Ahoge",
+"count": 2
+},
+{
+"index": 4,
+"name": "jetpack",
+"count": 2
+},
+{
+"index": 5,
+"name": "gun",
+"count": 2
+},
+{
+"index": 6,
+"name": "earmuffs",
+"count": 2
+},
+{
+"index": 7,
+"name": "upper armor",
+"count": 2
+},
+{
+"index": 8,
+"name": "lower armor",
+"count": 2
+},
+{
+"index": 9,
+"name": "Pop-up collar",
+"count": 2
+}
+]
+},
+"Kaede Akamatsu": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "Shoes",
+"count": 2
+},
+{
+"index": 4,
+"name": "Backpack",
+"count": 2
+},
+{
+"index": 6,
+"name": "Hairclips",
+"count": 2
+},
+{
+"index": 7,
+"name": "Tie",
+"count": 2
+}
+]
+},
+"Kaito Momota": {
+"skins": 1,
+"groups": [
+{
+"index": 4,
+"name": "sandal",
+"count": 2
+}
+]
+},
+"Kazuichi Soda 2": {
+"skins": 1,
+"groups": [
+{
+"index": 1,
+"name": "hat",
+"count": 2
+},
+{
+"index": 2,
+"name": "hair",
+"count": 2
+},
+{
+"index": 3,
+"name": "badge",
+"count": 2
+},
+{
+"index": 4,
+"name": "tack1",
+"count": 2
+},
+{
+"index": 5,
+"name": "tack2",
+"count": 2
+},
+{
+"index": 6,
+"name": "trinket",
+"count": 2
+},
+{
+"index": 8,
+"name": "shoes",
+"count": 2
+}
+]
+},
+"Kirumi Tojo": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "neck",
+"count": 2
+},
+{
+"index": 4,
+"name": "tie",
+"count": 2
+},
+{
+"index": 5,
+"name": "hand Ring",
+"count": 2
+}
+]
+},
+"Kiyotaka Ishimaru": {
+"skins": 2,
+"groups": [
+{
+"index": 3,
+"name": "suit",
+"count": 2
+}
+]
+},
+"Kokichi Oma Beta Uniform": {
+"skins": 2,
+"groups": [
+{
+"index": 1,
+"name": "shoes",
+"count": 2
+},
+{
+"index": 2,
+"name": "shirt",
+"count": 3
+},
+{
+"index": 3,
+"name": "Pants",
+"count": 2
+},
+{
+"index": 4,
+"name": "scarf",
+"count": 2
+},
+{
+"index": 5,
+"name": "hat",
+"count": 2
+},
+{
+"index": 6,
+"name": "cape",
+"count": 2
+},
+{
+"index": 7,
+"name": "mask",
+"count": 2
+},
+{
+"index": 8,
+"name": "hair shadow",
+"count": 2
+}
+]
+},
+"Kokichi Oma School Uniform": {
+"skins": 2,
+"groups": [
+{
+"index": 2,
+"name": "hat",
+"count": 2
+},
+{
+"index": 3,
+"name": "cape",
+"count": 2
+},
+{
+"index": 4,
+"name": "mask",
+"count": 2
+},
+{
+"index": 5,
+"name": "hair shadow",
+"count": 2
+}
+]
+},
+"Kokichi Oma Ultimate Uniform": {
+"skins": 2,
+"groups": [
+{
+"index": 1,
+"name": "shoes",
+"count": 2
+},
+{
+"index": 2,
+"name": "shirt",
+"count": 2
+},
+{
+"index": 3,
+"name": "Pants",
+"count": 2
+},
+{
+"index": 4,
+"name": "Leg straps",
+"count": 2
+},
+{
+"index": 5,
+"name": "scarf",
+"count": 2
+},
+{
+"index": 6,
+"name": "hat",
+"count": 2
+},
+{
+"index": 7,
+"name": "cape",
+"count": 2
+},
+{
+"index": 8,
+"name": "mask",
+"count": 2
+},
+{
+"index": 9,
+"name": "hair shadow",
+"count": 2
+},
+{
+"index": 10,
+"name": "upper_buttons",
+"count": 2
+}
+]
+},
+"Korekiyo Shinguji": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "hat",
+"count": 2
+},
+{
+"index": 4,
+"name": "chain",
+"count": 2
+},
+{
+"index": 5,
+"name": "badge",
+"count": 2
+}
+]
+},
+"Kyoko Kirigiri": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "Ribbon",
+"count": 2
+},
+{
+"index": 4,
+"name": "Emblem",
+"count": 2
+}
+]
+},
+"Leon Kuwata": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "pin",
+"count": 2
+},
+{
+"index": 4,
+"name": "chain",
+"count": 2
+},
+{
+"index": 5,
+"name": "earring",
+"count": 2
+},
+{
+"index": 6,
+"name": "footwear",
+"count": 3
+}
+]
+},
+"Mahiru Koizumi": {
+"skins": 1,
+"groups": [
+{
+"index": 4,
+"name": "tie",
+"count": 2
+},
+{
+"index": 5,
+"name": "camera",
+"count": 2
+}
+]
+},
+"Maki Harukawa": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "long Hair",
+"count": 2
+},
+{
+"index": 4,
+"name": "flower",
+"count": 2
+},
+{
+"index": 5,
+"name": "ribbon",
+"count": 2
+},
+{
+"index": 6,
+"name": "bracelet",
+"count": 2
+},
+{
+"index": 8,
+"name": "boots",
+"count": 2
+}
+]
+},
+"Makoto Naegi": {
+"skins": 1,
+"groups": [
+{
+"index": 1,
+"name": "body",
+"count": 3
+}
+]
+},
+"Mikan Tsumiki": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "apron",
+"count": 2
+},
+{
+"index": 4,
+"name": "skirt",
+"count": 2
+},
+{
+"index": 5,
+"name": "ribbon",
+"count": 2
+},
+{
+"index": 6,
+"name": "bandage",
+"count": 2
+},
+{
+"index": 7,
+"name": "socks",
+"count": 2
+},
+{
+"index": 8,
+"name": "shoes",
+"count": 2
+}
+]
+},
+"Miu Iruma": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "goggles",
+"count": 2
+},
+{
+"index": 4,
+"name": "necklace",
+"count": 2
+},
+{
+"index": 5,
+"name": "bow",
+"count": 2
+},
+{
+"index": 6,
+"name": "belts",
+"count": 2
+}
+]
+},
+"Mondo Owada": {
+"skins": 1,
+"groups": [
+{
+"index": 2,
+"name": "body",
+"count": 2
+},
+{
+"index": 3,
+"name": "clothes",
+"count": 2
+},
+{
+"index": 4,
+"name": "hand_band",
+"count": 2
+}
+]
+},
+"Mukuro Ikusaba": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "tattoo",
+"count": 2
+},
+{
+"index": 4,
+"name": "body",
+"count": 2
+},
+{
+"index": 5,
+"name": "skirt",
+"count": 2
+},
+{
+"index": 6,
+"name": "ribbon",
+"count": 2
+}
+]
+},
+"Nagito Komaeda": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "tie",
+"count": 2
+},
+{
+"index": 4,
+"name": "chains",
+"count": 2
+}
+]
+},
+"Nekomaru": {
+"skins": 1,
+"groups": [
+{
+"index": 2,
+"name": "Badge",
+"count": 2
+},
+{
+"index": 3,
+"name": "Chain",
+"count": 2
+},
+{
+"index": 4,
+"name": "Towel",
+"count": 2
+},
+{
+"index": 5,
+"name": "Geta",
+"count": 2
+}
+]
+},
+"Peko Pekoyama": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "Ribbon Hair",
+"count": 2
+},
+{
+"index": 4,
+"name": "Glasses",
+"count": 2
+},
+{
+"index": 5,
+"name": "Tie",
+"count": 2
+},
+{
+"index": 6,
+"name": "Logo",
+"count": 2
+},
+{
+"index": 7,
+"name": "Sword Bag",
+"count": 2
+},
+{
+"index": 8,
+"name": "Skirt",
+"count": 2
+}
+]
+},
+"Rantaro Amami": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "necklace",
+"count": 2
+},
+{
+"index": 4,
+"name": "bracelet Left",
+"count": 2
+},
+{
+"index": 5,
+"name": "bracelet Right",
+"count": 2
+}
+]
+},
+"Ryoma Hoshi": {
+"skins": 1,
+"groups": [
+{
+"index": 2,
+"name": "hat",
+"count": 2
+},
+{
+"index": 3,
+"name": "chain",
+"count": 2
+}
+]
+},
+"Sakura Ogami": {
+"skins": 1,
+"groups": [
+{
+"index": 4,
+"name": "skirt",
+"count": 2
+},
+{
+"index": 5,
+"name": "tie",
+"count": 2
+}
+]
+},
+"Sayaka Maizono": {
+"skins": 1,
+"groups": [
+{
+"index": 4,
+"name": "Hair Accessories",
+"count": 2
+},
+{
+"index": 5,
+"name": "Logo",
+"count": 2
+},
+{
+"index": 6,
+"name": "ribbon",
+"count": 2
+},
+{
+"index": 7,
+"name": "skirt",
+"count": 2
+}
+]
+},
+"Shuichi Saihara": {
+"skins": 1,
+"groups": [
+{
+"index": 1,
+"name": "Hat",
+"count": 2
+}
+]
+},
+"Sonia Nevermind": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "neko Ears",
+"count": 2
+},
+{
+"index": 4,
+"name": "ribbon",
+"count": 2
+},
+{
+"index": 5,
+"name": "ribbon2",
+"count": 2
+},
+{
+"index": 6,
+"name": "badge",
+"count": 2
+},
+{
+"index": 7,
+"name": "bracelet",
+"count": 2
+},
+{
+"index": 8,
+"name": "skirt",
+"count": 2
+}
+]
+},
+"Tenko Chabashira": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "bando",
+"count": 2
+},
+{
+"index": 4,
+"name": "shuriken",
+"count": 2
+},
+{
+"index": 5,
+"name": "necklace",
+"count": 2
+},
+{
+"index": 6,
+"name": "bow",
+"count": 2
+},
+{
+"index": 7,
+"name": "skirt",
+"count": 2
+},
+{
+"index": 8,
+"name": "sandal",
+"count": 2
+}
+]
+},
+"Teruteru Hanamura": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "hat",
+"count": 2
+},
+{
+"index": 4,
+"name": "scalf",
+"count": 2
+},
+{
+"index": 5,
+"name": "apron",
+"count": 2
+}
+]
+},
+"Toko Fukawa": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "glasses",
+"count": 2
+}
+]
+},
+"Toko Fukawa (Genocide)": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "glasses",
+"count": 2
+},
+{
+"index": 4,
+"name": "tongue",
+"count": 2
+}
+]
+},
+"Tsumugi Shirogane": {
+"skins": 2,
+"groups": [
+{
+"index": 3,
+"name": "glasses",
+"count": 2
+},
+{
+"index": 4,
+"name": "bow",
+"count": 2
+}
+]
+},
+"Yasuhiro Hagakure (Danganronpa)": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "clothes",
+"count": 2
+},
+{
+"index": 4,
+"name": "hand Accessories",
+"count": 2
+},
+{
+"index": 5,
+"name": "belt",
+"count": 2
+},
+{
+"index": 6,
+"name": "sandals Left",
+"count": 2
+},
+{
+"index": 7,
+"name": "sandals Right",
+"count": 2
+}
+]
+}
+}
