@@ -236,9 +236,36 @@ def patch_mdl_bodygroup_names(path, index_to_name):
             continue
         raw = str(new_name or "").encode("utf-8")
         old_raw = old_name.encode("utf-8")
-        if len(raw) > len(old_raw):
+        if len(raw) <= len(old_raw):
+            data[name_offset:name_offset + len(old_raw)] = raw + (b"\0" * (len(old_raw) - len(raw)))
+        else:
+            append_offset = len(data)
+            data.extend(raw + b"\0")
+            struct.pack_into("<i", data, offset, append_offset - offset)
+        changed = True
+    if changed:
+        with open(path, "wb") as f:
+            f.write(data)
+    return changed
+
+
+def patch_mdl_bodygroup_counts(path, index_to_count):
+    with open(path, "rb") as f:
+        data = bytearray(f.read())
+    if len(data) < 240:
+        return False
+    try:
+        numbodyparts, bodypartindex = struct.unpack_from("<ii", data, 232)
+    except struct.error:
+        return False
+    changed = False
+    for index, count in index_to_count.items():
+        if not (0 <= int(index) < numbodyparts):
             continue
-        data[name_offset:name_offset + len(old_raw)] = raw + (b"\0" * (len(old_raw) - len(raw)))
+        offset = bodypartindex + int(index) * 16
+        if offset + 16 > len(data):
+            continue
+        struct.pack_into("<i", data, offset + 4, max(1, int(count)))
         changed = True
     if changed:
         with open(path, "wb") as f:
@@ -608,12 +635,21 @@ def patch_retargeted_model_bodygroup_names(dest_folder, pack, target, source):
     target_groups = parse_mdl_bodygroups(target_reference_mdl)
     compat = bodygroup_compat_map(target_groups, override_groups)
     renames = {}
+    used_override = set()
     for _target_index, item in compat.items():
         target_name = item.get("target_name") or ""
         override_index = item.get("override_index")
         if target_name and override_index is not None:
             renames[int(override_index)] = target_name
-    return patch_mdl_bodygroup_names(copied_mdl, renames)
+            used_override.add(int(override_index))
+    hide_counts = {
+        int(group["index"]): 1
+        for group in configurable_groups(override_groups)
+        if int(group["index"]) not in used_override
+    }
+    changed_names = patch_mdl_bodygroup_names(copied_mdl, renames)
+    changed_counts = patch_mdl_bodygroup_counts(copied_mdl, hide_counts)
+    return changed_names or changed_counts
 
 
 def read_source_target_from_json(folder):
@@ -770,6 +806,7 @@ def enable(cfg, pack, target=None):
             if not source.get("model_base"):
                 raise ValueError("Could not infer this pack's source model path for retargeting.")
             copy_pack_tree(pack["folder"], dest, source, target)
+            patch_retargeted_model_bodygroup_names(dest, pack, target, source)
         else:
             copy_pack_tree(pack["folder"], dest)
         aj = os.path.join(dest, "addon.json")

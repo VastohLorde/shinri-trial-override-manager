@@ -253,20 +253,62 @@ class RetargetingTests(unittest.TestCase):
         )
         self.assertFalse(os.path.exists(lua_path))
 
-    def test_bodygroup_name_patch_renames_only_matching_length_labels(self):
+    def test_bodygroup_name_patch_can_append_longer_labels(self):
         source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Hoshino Himiko"
         if not os.path.exists(os.path.join(source_pack, "models/dro/player/characters3/char12/char12.mdl")):
             self.skipTest("real Hoshino model not available")
         mdl_path = os.path.join(self.tempdir, "char12.mdl")
         shutil.copy2(os.path.join(source_pack, "models/dro/player/characters3/char12/char12.mdl"), mdl_path)
 
-        changed = om.patch_mdl_bodygroup_names(mdl_path, {7: "hat", 10: "shoes"})
+        changed = om.patch_mdl_bodygroup_names(mdl_path, {7: "glasses", 10: "shoes"})
 
         self.assertTrue(changed)
         groups = {group["index"]: group for group in om.parse_mdl_bodygroups(mdl_path)}
-        self.assertEqual("hat", groups[7]["name"])
+        self.assertEqual("glasses", groups[7]["name"])
         self.assertEqual("shoes", groups[10]["name"])
         self.assertEqual("pants", groups[8]["name"])
+
+    def test_enable_retarget_renames_override_bodygroups_to_target_slider_names(self):
+        source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Hoshino Himiko"
+        target_model = r"C:\Users\user\Desktop\Female_Shuichi_Addon_Extracts\2562456244_PlayerModels_ST\models\dro\player\characters1\char9\char9.mdl"
+        if not os.path.exists(os.path.join(source_pack, "models/dro/player/characters3/char12/char12.mdl")) or not os.path.exists(target_model):
+            self.skipTest("real Hoshino/Junko models not available")
+        cfg = {"gmod_path": self.tempdir}
+        pack = {"name": "Hoshino Himiko", "slug": "ovr_hoshino_himiko", "folder": source_pack}
+        target = om.find_target({}, "Junko Enoshima (Default)")
+
+        om.enable(cfg, pack, target)
+
+        mdl_path = os.path.join(
+            self.tempdir,
+            "addons",
+            "ovr_hoshino_himiko__junko_enoshima__default",
+            "models/dro/player/characters1/char9/char9.mdl",
+        )
+        names = [group["name"] for group in om.parse_mdl_bodygroups(mdl_path)]
+        self.assertIn("glasses", names)
+        self.assertIn("tie", names)
+        self.assertIn("skirt", names)
+
+    def test_enable_retarget_hides_unmatched_override_bodygroups(self):
+        source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Hoshino Himiko"
+        target_model = r"C:\Users\user\Desktop\Female_Shuichi_Addon_Extracts\2562456244_PlayerModels_ST\models\dro\player\characters1\char9\char9.mdl"
+        if not os.path.exists(os.path.join(source_pack, "models/dro/player/characters3/char12/char12.mdl")) or not os.path.exists(target_model):
+            self.skipTest("real Hoshino/Junko models not available")
+        cfg = {"gmod_path": self.tempdir}
+        pack = {"name": "Hoshino Himiko", "slug": "ovr_hoshino_himiko", "folder": source_pack}
+        target = om.find_target({}, "Junko Enoshima (Default)")
+
+        om.enable(cfg, pack, target)
+
+        mdl_path = os.path.join(
+            self.tempdir,
+            "addons",
+            "ovr_hoshino_himiko__junko_enoshima__default",
+            "models/dro/player/characters1/char9/char9.mdl",
+        )
+        visible = [group["name"] for group in om.parse_mdl_bodygroups(mdl_path) if group["count"] > 1]
+        self.assertEqual(["glasses", "skirt", "tie"], sorted(visible))
 
     def test_disable_removes_default_and_retargeted_addons_for_pack(self):
         addons = os.path.join(self.tempdir, "addons")
