@@ -47,7 +47,7 @@ OLD_COMMUNITY_INDEX_URLS = {
     # Pre-rename URL: auto-migrate existing configs to the new repo path.
     "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs.json",
 }
-APP_VERSION = "1.4"
+APP_VERSION = "1.5"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -637,26 +637,32 @@ def pack_override_mdl(pack):
     return os.path.join(pack["folder"], *(normalize_game_path(base) + ".mdl").split("/"))
 
 
-def capacity_pairs(override_groups, target_groups):
-    """Pair each override configurable group with a target one, sorted by option
-    count descending (this maximizes total reachable options). Returns
-    [(override_group, target_group_or_None, reachable_options)]."""
-    ov = sorted(override_groups, key=lambda g: (-g["count"], g["index"]))
-    tg = sorted(target_groups, key=lambda g: (-g["count"], g["index"]))
+def index_pairs(override_groups, target_groups):
+    """Pair each override configurable group with the base group AT THE SAME INDEX.
+    The in-game customization tool applies slider <k> (built from the override model)
+    to the base character's bodygroup <k>, so reachability is decided index-by-index,
+    not by best capacity. A base group only counts if it has >1 option (the tool
+    skips single-option groups). Returns [(override_group, target_group_or_None,
+    reachable_options)]."""
+    by_index = {int(g["index"]): g for g in target_groups}
     pairs = []
-    for i, o in enumerate(ov):
-        t = tg[i] if i < len(tg) else None
-        reachable = min(o["count"], t["count"]) if t else 1
+    for o in sorted(override_groups, key=lambda g: g["index"]):
+        t = by_index.get(int(o["index"]))
+        if t and int(t["count"]) > 1:
+            reachable = min(o["count"], int(t["count"]))
+        else:
+            t = None
+            reachable = 1
         pairs.append((o, t, reachable))
     return pairs
 
 
 def match_override_to_profile(ov_groups, ov_skins, profile):
     """Score how well a base character can host an override model's customization.
-    Bodygroups are capped by the base group's option count; skins are uncapped but
-    only apply if the base model has more than one skin."""
+    Bodygroups are capped by the base group's option count at the same index; skins
+    are uncapped but only apply if the base model has more than one skin."""
     tg = profile.get("groups", [])
-    pairs = capacity_pairs(ov_groups, tg)
+    pairs = index_pairs(ov_groups, tg)
     bg_reach = sum(r for _, _, r in pairs)
     bg_total = sum(o["count"] for o in ov_groups)
     tsk = int(profile.get("skins", 1) or 1)

@@ -101,7 +101,10 @@ your model's customization is actually reachable:
 
 - A ranked list with a **Match %** and the best slider-by-slider fit.
 - 100% means every outfit/skin option on your model can be selected; lower means some
-  options are hidden because that base character's slider has fewer positions.
+  options are hidden because that base character's slider has fewer positions. The
+  score reflects what actually works in-game: the customization tool matches sliders
+  by bodygroup **index**, so a character only helps if it has enough options at the
+  same index your model uses.
 - Pick a character to see an **outfit-by-outfit** table: every individual option on your
   model (outfit1, outfit2, … plus each skin) with a clear reachable/unreachable status
   and exactly which slider position selects it. Then **Set as Target Character** to

@@ -498,18 +498,19 @@ class RetargetingTests(unittest.TestCase):
 
 
 class RecommenderTests(unittest.TestCase):
-    def test_bodygroup_options_capped_by_base_count(self):
-        # Shiroko's outfit (3) onto Kirumi (a 2-option group) -> only 2 reachable;
-        # onto Makoto (a 3-option group) -> all 3 reachable.
+    def test_bodygroup_options_capped_by_base_count_at_same_index(self):
+        # Reachability is decided index-by-index (that's how the in-game tool works).
+        # Shiroko's outfit at index 3 -> Kirumi's index-3 group (2 options) = 2 of 3.
         ov = [{"index": 3, "name": "outfit", "count": 3}]
         kirumi = {"skins": 1, "groups": [{"index": 3, "name": "neck", "count": 2},
                                          {"index": 4, "name": "tie", "count": 2}]}
+        # Makoto's 3-option group is at index 1, NOT 3, so it does NOT help here.
         makoto = {"skins": 1, "groups": [{"index": 1, "name": "body", "count": 3}]}
-        r_kirumi = om.match_override_to_profile(ov, 1, kirumi)
-        r_makoto = om.match_override_to_profile(ov, 1, makoto)
-        self.assertEqual((r_kirumi["reach"], r_kirumi["total"]), (2, 3))
-        self.assertEqual((r_makoto["reach"], r_makoto["total"]), (3, 3))
-        self.assertGreater(r_makoto["pct"], r_kirumi["pct"])
+        # A character with a 3-option group exactly at index 3 unlocks all 3.
+        good = {"skins": 1, "groups": [{"index": 3, "name": "anything", "count": 3}]}
+        self.assertEqual(om.match_override_to_profile(ov, 1, kirumi)["reach"], 2)
+        self.assertEqual(om.match_override_to_profile(ov, 1, makoto)["reach"], 1)
+        self.assertEqual(om.match_override_to_profile(ov, 1, good)["reach"], 3)
 
     def test_skins_uncapped_but_need_base_with_multiple_skins(self):
         # 3 override skins reach all 3 when base has >1 skin; locked to 1 when base has 1.
@@ -518,13 +519,14 @@ class RecommenderTests(unittest.TestCase):
         self.assertEqual((r_ok["reach"], r_ok["total"]), (3, 3))
         self.assertEqual((r_locked["reach"], r_locked["total"]), (1, 3))
 
-    def test_capacity_pairs_prefers_largest_groups(self):
-        pairs = om.capacity_pairs(
-            [{"index": 0, "name": "a", "count": 3}, {"index": 1, "name": "b", "count": 2}],
-            [{"index": 0, "name": "x", "count": 2}, {"index": 1, "name": "y", "count": 4}],
+    def test_index_pairs_match_by_index_not_capacity(self):
+        pairs = om.index_pairs(
+            [{"index": 1, "name": "outfit", "count": 3}],
+            [{"index": 1, "name": "x", "count": 2}, {"index": 5, "name": "y", "count": 4}],
         )
-        # largest override (3) pairs with largest target (4) -> 3 reachable
-        self.assertEqual(pairs[0][2], 3)
+        # override idx1 pairs with target idx1 (2 options) -> 2, ignoring the bigger idx5 group
+        self.assertEqual(pairs[0][2], 2)
+        self.assertEqual(pairs[0][1]["index"], 1)
 
 
 if __name__ == "__main__":
