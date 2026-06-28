@@ -44,6 +44,15 @@
       "author": "VastohLorde",
       "description": "Replaces Kirumi Tojo with Shiroko Terror's playermodel, courtroom sprites, and scrum debate sprites.",
       "download_url": "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs/Shiroko.Terror.Kirumi.zip"
+    },
+    {
+      "name": "Shiroko Mahiru",
+      "character": "Mahiru Koizumi",
+      "skin": "Shiroko model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Replaces Mahiru Koizumi with Sunaookami Shiroko's playermodel and Shiroko courtroom sprites. Retargetable to other characters in the app.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs/Shiroko.Mahiru.zip"
     }
   ]
 }
