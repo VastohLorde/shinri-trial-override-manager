@@ -555,5 +555,34 @@ class RecommenderTests(unittest.TestCase):
         self.assertEqual(pairs[0][1]["index"], 1)
 
 
+class ConflictResolutionTests(unittest.TestCase):
+    def test_older_pack_keeps_target_newer_falls_back(self):
+        packs = [{"name": "Old", "folder": "/old"}, {"name": "New", "folder": "/new"}]
+        slugs = {om.pack_addon_prefix(packs[0]), om.pack_addon_prefix(packs[1])}
+        orig_ct, orig_pref = om.pack_ctime, om.pack_target_preferences
+        om.pack_ctime = lambda p: 1 if p["name"] == "Old" else 2
+        om.pack_target_preferences = lambda cfg, p, primary: [("Ibuki Mioda", "char5"), ("Celestia Ludenberg", "char8")]
+        try:
+            asg = om.resolve_enabled_assignment({}, packs, slugs, lambda p: "Ibuki Mioda")
+        finally:
+            om.pack_ctime, om.pack_target_preferences = orig_ct, orig_pref
+        self.assertEqual(asg[om.pack_addon_prefix(packs[0])], "Ibuki Mioda")        # older keeps it
+        self.assertEqual(asg[om.pack_addon_prefix(packs[1])], "Celestia Ludenberg")  # newer falls back
+
+    def test_no_conflict_keeps_both_preferred(self):
+        packs = [{"name": "A", "folder": "/a"}, {"name": "B", "folder": "/b"}]
+        slugs = {om.pack_addon_prefix(packs[0]), om.pack_addon_prefix(packs[1])}
+        orig_ct, orig_pref = om.pack_ctime, om.pack_target_preferences
+        om.pack_ctime = lambda p: 1 if p["name"] == "A" else 2
+        prefs = {"A": [("X", "slotX"), ("Z", "slotZ")], "B": [("Y", "slotY"), ("Z", "slotZ")]}
+        om.pack_target_preferences = lambda cfg, p, primary: prefs[p["name"]]
+        try:
+            asg = om.resolve_enabled_assignment({}, packs, slugs, lambda p: prefs[p["name"]][0][0])
+        finally:
+            om.pack_ctime, om.pack_target_preferences = orig_ct, orig_pref
+        self.assertEqual(asg[om.pack_addon_prefix(packs[0])], "X")
+        self.assertEqual(asg[om.pack_addon_prefix(packs[1])], "Y")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -35,6 +35,11 @@ local pack folder unchanged.
 To go back, choose the **Recommended** option and enable again. Disabling a pack
 removes every installed target variant for that pack.
 
+**Automatic conflict resolution:** if two *enabled* overrides would land on the same
+character, the one you enabled first keeps it and the newer one is automatically
+moved to its next best target (see Best Target), so they never clash. Disable the
+first one and the other moves back to its preferred character.
+
 Use **Custom target...** for weird cases. Enter a model base path such as:
 
 ```

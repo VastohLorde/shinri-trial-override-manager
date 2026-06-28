@@ -47,7 +47,7 @@ OLD_COMMUNITY_INDEX_URLS = {
     # Pre-rename URL: auto-migrate existing configs to the new repo path.
     "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs.json",
 }
-APP_VERSION = "1.7"
+APP_VERSION = "1.8"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -717,6 +717,64 @@ def recommend_targets(pack):
     return recommend_targets_for_model(pack_override_mdl(pack))
 
 
+def pack_ctime(pack):
+    try:
+        return os.path.getctime(pack.get("folder", ""))
+    except Exception:
+        return float("inf")
+
+
+def target_model_slot(cfg, pack, target_name):
+    """The model base path (character slot) a pack installs to for a target name."""
+    if not target_name or target_name == DEFAULT_TARGET_NAME:
+        base = infer_source_target(pack.get("folder", "")).get("model_base", "")
+    else:
+        t = find_target(cfg, target_name)
+        base = t["model_base"] if t else ""
+    return path_without_ext(normalize_game_path(base)) if base else ""
+
+
+def pack_target_preferences(cfg, pack, primary_name):
+    """Ordered (target_name, slot): the desired target first, then the Best Target
+    ranking, then Default - deduped by character slot."""
+    prefs = []
+    seen = set()
+
+    def add(name):
+        slot = target_model_slot(cfg, pack, name)
+        if slot and slot not in seen:
+            seen.add(slot)
+            prefs.append((name, slot))
+
+    add(primary_name)
+    try:
+        _ovp, ranked = recommend_targets(pack)
+    except Exception:
+        ranked = []
+    for r in (ranked or []):
+        add(r["name"])
+    add(DEFAULT_TARGET_NAME)
+    return prefs
+
+
+def resolve_enabled_assignment(cfg, packs, enabled_slugs, primary_of):
+    """Give each enabled pack a conflict-free target by creation-time priority
+    (older pack = first pick of its preferences). primary_of(pack) -> desired
+    target name. Returns {slug: target_name}."""
+    enabled = [p for p in packs if pack_addon_prefix(p) in enabled_slugs]
+    enabled.sort(key=lambda p: (pack_ctime(p), pack_addon_prefix(p)))
+    claimed = set()
+    out = {}
+    for p in enabled:
+        prefs = pack_target_preferences(cfg, p, primary_of(p))
+        chosen = next(((n, s) for n, s in prefs if s not in claimed), None)
+        if chosen is None:
+            chosen = prefs[0] if prefs else (DEFAULT_TARGET_NAME, "")
+        claimed.add(chosen[1])
+        out[pack_addon_prefix(p)] = chosen[0]
+    return out
+
+
 def lua_quote(value):
     return json.dumps(str(value or ""))
 
@@ -1099,6 +1157,9 @@ def scan_overrides():
         folder = os.path.join(OVERRIDES_DIR, name)
         if not os.path.isdir(folder):
             continue
+        low = name.lower()
+        if ".bak" in low or low.endswith("~") or low.startswith("backup"):
+            continue  # skip backup folders so they don't collide with the real pack
         has_content = os.path.isdir(os.path.join(folder, "models")) or os.path.isdir(os.path.join(folder, "materials"))
         if not has_content:
             continue
@@ -2121,6 +2182,7 @@ class App(tk.Tk):
         if not os.path.isdir(addons_dir(self.cfg)):
             messagebox.showerror("GMod not found", "Set the correct GMod folder first.")
             return
+        moved = []
         try:
             if want_on:
                 target = self.selected_target()
@@ -2133,12 +2195,53 @@ class App(tk.Tk):
                                                    "Continue?"):
                             return
                 save_pack_target(self.cfg, p, self.selected_target_name())
-                enable(self.cfg, p, target)
+                moved = self.apply_reconcile(enabling=p)
             else:
-                disable(self.cfg, p)
+                moved = self.apply_reconcile(disabling=p)
         except Exception as e:
             messagebox.showerror("Error", str(e))
         self.refresh()
+        if moved:
+            lines = "\n".join("- %s  ->  %s" % (n, t) for n, t in moved)
+            messagebox.showinfo("Target conflict resolved",
+                                "Another enabled override already uses that character, so to avoid a clash "
+                                "these were moved to their next best target (the override made first keeps "
+                                "priority):\n\n" + lines)
+
+    def apply_reconcile(self, enabling=None, disabling=None):
+        """Reconcile every enabled override onto a distinct target character. When two
+        enabled packs want the same character, the one created first keeps it and the
+        newer one is moved to its next best target. Returns [(pack_name, target)] for
+        packs that did NOT get their preferred target."""
+        enabled_slugs = {pack_addon_prefix(p) for p in self.packs if enabled_target_name(self.cfg, p)}
+        if disabling:
+            enabled_slugs.discard(pack_addon_prefix(disabling))
+        if enabling:
+            enabled_slugs.add(pack_addon_prefix(enabling))
+
+        def primary_of(pk):
+            return saved_target_name(self.cfg, pk)
+
+        assignment = resolve_enabled_assignment(self.cfg, self.packs, enabled_slugs, primary_of)
+        if disabling:
+            disable(self.cfg, disabling)
+
+        by_slug = {pack_addon_prefix(p): p for p in self.packs}
+        moved = []
+        for slug in enabled_slugs:
+            p = by_slug.get(slug)
+            if not p:
+                continue
+            want = assignment.get(slug, DEFAULT_TARGET_NAME)
+            want_slot = target_model_slot(self.cfg, p, want)
+            cur = enabled_target_name(self.cfg, p)
+            cur_slot = target_model_slot(self.cfg, p, cur) if cur else None
+            if (not cur) or cur_slot != want_slot:
+                tgt = find_target(self.cfg, want) if want and want != DEFAULT_TARGET_NAME else None
+                enable(self.cfg, p, tgt)
+            if want_slot != target_model_slot(self.cfg, p, primary_of(p)):
+                moved.append((p["name"], want))
+        return moved
 
     def delete_selected(self):
         p = self.selected()
