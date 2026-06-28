@@ -16,6 +16,7 @@ import sys
 import json
 import shutil
 import subprocess
+import struct
 import threading
 import tempfile
 import tkinter as tk
@@ -57,6 +58,99 @@ def path_without_ext(path):
     if ext.lower() in (".mdl", ".vvd", ".phy", ".vtx"):
         return root
     return path
+
+
+def read_c_string(data, offset):
+    if offset <= 0 or offset >= len(data):
+        return ""
+    end = data.find(b"\0", offset)
+    if end < 0:
+        end = len(data)
+    return data[offset:end].decode("utf-8", "replace")
+
+
+def parse_mdl_bodygroups(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    if len(data) < 240:
+        return []
+    try:
+        numbodyparts, bodypartindex = struct.unpack_from("<ii", data, 232)
+    except struct.error:
+        return []
+    groups = []
+    for index in range(max(0, numbodyparts)):
+        offset = bodypartindex + index * 16
+        if offset + 16 > len(data):
+            break
+        sznameindex, nummodels, base, _modelindex = struct.unpack_from("<iiii", data, offset)
+        groups.append({
+            "index": index,
+            "name": read_c_string(data, offset + sznameindex),
+            "count": nummodels,
+            "base": base,
+        })
+    return groups
+
+
+def bodygroup_key(name):
+    cleaned = " ".join("".join(c.lower() if c.isalnum() else " " for c in str(name or "")).split())
+    aliases = {
+        "hat": "halo",
+        "hair pin": "halo",
+        "hairpin": "halo",
+        "cap": "halo",
+        "shoe": "shoes",
+        "leg": "pants",
+        "legs": "pants",
+        "trousers": "pants",
+        "dress": "skirt",
+        "coat": "cloth",
+        "cape": "cloth",
+        "shirt": "cloth",
+        "jacket": "cloth",
+        "hand": "glove",
+        "hands": "glove",
+        "gloves": "glove",
+        "bow": "ribbon",
+        "necktie": "tie",
+    }
+    return aliases.get(cleaned, cleaned)
+
+
+def configurable_groups(groups):
+    return [g for g in groups if int(g.get("count") or 0) > 1 and bodygroup_key(g.get("name")) != "reference"]
+
+
+def bodygroup_compat_map(target_groups, override_groups):
+    override_config = configurable_groups(override_groups)
+    by_key = {}
+    for group in override_config:
+        by_key.setdefault(bodygroup_key(group.get("name")), group)
+    fallback = [g for g in override_config if bodygroup_key(g.get("name")) not in ("reference",)]
+    used = set()
+    mapping = {}
+    fallback_pos = 0
+    for target in configurable_groups(target_groups):
+        key = bodygroup_key(target.get("name"))
+        override = by_key.get(key)
+        if not override:
+            while fallback and fallback[fallback_pos % len(fallback)]["index"] in used:
+                fallback_pos += 1
+                if fallback_pos > len(fallback) * 2:
+                    break
+            override = fallback[fallback_pos % len(fallback)] if fallback else None
+            fallback_pos += 1
+        if not override:
+            continue
+        used.add(override["index"])
+        mapping[target["index"]] = {
+            "target_name": target.get("name") or "",
+            "override_index": override["index"],
+            "override_name": override.get("name") or "",
+            "override_count": int(override.get("count") or 1),
+        }
+    return mapping
 
 
 def safe_game_path(path, allow_empty=True, strip_ext=False):
@@ -314,6 +408,80 @@ def target_change_needs_apply(cfg, pack, target_name):
     return active != (target_name or DEFAULT_TARGET_NAME)
 
 
+def mdl_path_from_base(root, model_base):
+    if not model_base:
+        return ""
+    return os.path.join(root, *(normalize_game_path(model_base) + ".mdl").split("/"))
+
+
+def find_known_target_mdl(target):
+    model_rel = normalize_game_path(target.get("model_base", "")) + ".mdl"
+    candidates = [
+        os.path.join(APP_DIR, *model_rel.split("/")),
+        os.path.join(r"C:\Users\user\Desktop\Female_Shuichi_Addon_Extracts\2562456244_PlayerModels_ST", *model_rel.split("/")),
+        os.path.join(r"C:\Users\user\Desktop\GMod_Override_Manager\overrides", *model_rel.split("/")),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return ""
+
+
+def lua_quote(value):
+    return json.dumps(str(value or ""))
+
+
+def generate_bodygroup_compat_lua(model_path, mapping):
+    lines = [
+        "if SERVER then return end",
+        "local MODEL = " + lua_quote(normalize_game_path(model_path).lower()),
+        "local MAP = {",
+    ]
+    for target_index in sorted(mapping):
+        item = mapping[target_index]
+        lines.append(
+            f"  [{int(target_index)}] = {{ override = {int(item['override_index'])}, count = {int(item['override_count'])}, name = {lua_quote(item.get('override_name', ''))} }},"
+        )
+    lines += [
+        "}",
+        "local function apply()",
+        "  local ply = LocalPlayer()",
+        "  if not IsValid(ply) then return end",
+        "  if string.lower(ply:GetModel() or '') ~= MODEL then return end",
+        "  if ply.__ovrBodygroupCompatBusy then return end",
+        "  ply.__ovrBodygroupCompatBusy = true",
+        "  for targetIndex, item in pairs(MAP) do",
+        "    local value = ply:GetBodygroup(targetIndex) or 0",
+        "    if item.count and item.count > 0 then value = math.Clamp(value, 0, item.count - 1) end",
+        "    if ply:GetBodygroup(item.override) ~= value then ply:SetBodygroup(item.override, value) end",
+        "  end",
+        "  ply.__ovrBodygroupCompatBusy = false",
+        "end",
+        "hook.Add('Think', 'ovr_bodygroup_compat_' .. MODEL, apply)",
+        "hook.Add('PostPlayerDraw', 'ovr_bodygroup_compat_draw_' .. MODEL, function(ply) if ply == LocalPlayer() then apply() end end)",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def write_bodygroup_compat_lua(dest_folder, pack, target, source):
+    source_mdl = mdl_path_from_base(pack["folder"], source.get("model_base", ""))
+    target_mdl = find_known_target_mdl(target)
+    if not os.path.exists(source_mdl) or not os.path.exists(target_mdl):
+        return False
+    override_groups = parse_mdl_bodygroups(source_mdl)
+    target_groups = parse_mdl_bodygroups(target_mdl)
+    mapping = bodygroup_compat_map(target_groups, override_groups)
+    if not mapping:
+        return False
+    lua_dir = os.path.join(dest_folder, "lua", "autorun")
+    os.makedirs(lua_dir, exist_ok=True)
+    lua_name = f"ovr_bodygroup_compat_{addon_slug(pack, target)}.lua"
+    with open(os.path.join(lua_dir, lua_name), "w", encoding="utf-8") as f:
+        f.write(generate_bodygroup_compat_lua(target.get("model_base", "") + ".mdl", mapping))
+    return True
+
+
 def read_source_target_from_json(folder):
     path = os.path.join(folder, "override.json")
     if not os.path.exists(path):
@@ -468,6 +636,7 @@ def enable(cfg, pack, target=None):
             if not source.get("model_base"):
                 raise ValueError("Could not infer this pack's source model path for retargeting.")
             copy_pack_tree(pack["folder"], dest, source, target)
+            write_bodygroup_compat_lua(dest, pack, target, source)
         else:
             copy_pack_tree(pack["folder"], dest)
         aj = os.path.join(dest, "addon.json")

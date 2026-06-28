@@ -131,6 +131,40 @@ class RetargetingTests(unittest.TestCase):
         self.assertTrue(om.target_change_needs_apply(cfg, pack, "Angie Yonaga"))
         self.assertFalse(om.target_change_needs_apply(cfg, pack, om.DEFAULT_TARGET_NAME))
 
+    def test_parse_mdl_bodygroups_from_hoshino_model(self):
+        path = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Hoshino Himiko\models\dro\player\characters3\char12\char12.mdl"
+        if not os.path.exists(path):
+            self.skipTest("Hoshino override model not available")
+
+        groups = om.parse_mdl_bodygroups(path)
+
+        names = [group["name"] for group in groups]
+        self.assertIn("halo", names)
+        self.assertIn("shoes", names)
+        self.assertEqual(7, names.index("halo"))
+        self.assertEqual(10, names.index("shoes"))
+
+    def test_bodygroup_compat_map_matches_names_then_falls_back(self):
+        override_groups = [
+            {"index": 0, "name": "reference", "count": 1},
+            {"index": 5, "name": "glove", "count": 2},
+            {"index": 7, "name": "halo", "count": 2},
+            {"index": 8, "name": "pants", "count": 2},
+            {"index": 10, "name": "shoes", "count": 4},
+        ]
+        target_groups = [
+            {"index": 0, "name": "reference", "count": 1},
+            {"index": 1, "name": "hat", "count": 2},
+            {"index": 2, "name": "shoes", "count": 2},
+            {"index": 3, "name": "cape", "count": 2},
+        ]
+
+        mapping = om.bodygroup_compat_map(target_groups, override_groups)
+
+        self.assertEqual(7, mapping[1]["override_index"])
+        self.assertEqual(10, mapping[2]["override_index"])
+        self.assertIn(mapping[3]["override_index"], {5, 8})
+
     def test_safe_game_path_rejects_unsafe_paths(self):
         self.assertEqual("models/dro/player/characters1/char16/char16", om.safe_game_path("models\\dro\\player\\characters1\\char16\\char16.mdl", allow_empty=False, strip_ext=True))
         for value in ("", "../models/x", "/models/x", "C:/models/x", "cfg/client.vdf"):
@@ -176,6 +210,30 @@ class RetargetingTests(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(addon, "materials/dro/sprites/characters/dr_1/mukuro ikusaba/ct_sprite_1.vtf")))
         self.assertTrue(os.path.exists(os.path.join(addon, "materials/models/hoshino_new/hair.vtf")))
         self.assertFalse(os.path.exists(os.path.join(self.tempdir, "addons", "ovr_hoshino_himiko")))
+
+    def test_enable_retarget_writes_bodygroup_compat_lua(self):
+        source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Hoshino Himiko"
+        target_model = r"C:\Users\user\Desktop\Female_Shuichi_Addon_Extracts\2562456244_PlayerModels_ST\models\dro\player\characters3\char15\char15.mdl"
+        if not os.path.exists(os.path.join(source_pack, "models/dro/player/characters3/char12/char12.mdl")) or not os.path.exists(target_model):
+            self.skipTest("real Hoshino/target models not available")
+        cfg = {"gmod_path": self.tempdir}
+        pack = {"name": "Hoshino Himiko", "slug": "ovr_hoshino_himiko", "folder": source_pack}
+        target = om.find_target({}, "Angie Yonaga")
+
+        om.enable(cfg, pack, target)
+
+        lua_path = os.path.join(
+            self.tempdir,
+            "addons",
+            "ovr_hoshino_himiko__angie_yonaga",
+            "lua/autorun/ovr_bodygroup_compat_ovr_hoshino_himiko__angie_yonaga.lua",
+        )
+        self.assertTrue(os.path.exists(lua_path))
+        with open(lua_path, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("models/dro/player/characters3/char15/char15.mdl", text)
+        self.assertIn("SetBodygroup", text)
+        self.assertIn("halo", text)
 
     def test_disable_removes_default_and_retargeted_addons_for_pack(self):
         addons = os.path.join(self.tempdir, "addons")
