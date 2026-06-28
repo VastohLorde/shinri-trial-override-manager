@@ -165,6 +165,29 @@ class RetargetingTests(unittest.TestCase):
         self.assertEqual(10, mapping[2]["override_index"])
         self.assertIn(mapping[3]["override_index"], {5, 8})
 
+    def test_bodygroup_reorder_plan_places_override_groups_at_target_indexes(self):
+        override_groups = [
+            {"index": 0, "name": "reference", "count": 1},
+            {"index": 5, "name": "glove", "count": 2},
+            {"index": 7, "name": "halo", "count": 2},
+            {"index": 8, "name": "pants", "count": 2},
+            {"index": 10, "name": "shoes", "count": 4},
+            {"index": 11, "name": "skirt", "count": 2},
+            {"index": 12, "name": "tie", "count": 2},
+        ]
+        target_groups = [
+            {"index": 0, "name": "reference", "count": 1},
+            {"index": 3, "name": "glasses", "count": 2},
+            {"index": 4, "name": "tie", "count": 2},
+            {"index": 6, "name": "skirt", "count": 2},
+        ]
+
+        plan = om.bodygroup_reorder_plan(target_groups, override_groups)
+
+        self.assertEqual(5, plan[3])
+        self.assertEqual(12, plan[4])
+        self.assertEqual(11, plan[6])
+
     def test_safe_game_path_rejects_unsafe_paths(self):
         self.assertEqual("models/dro/player/characters1/char16/char16", om.safe_game_path("models\\dro\\player\\characters1\\char16\\char16.mdl", allow_empty=False, strip_ext=True))
         for value in ("", "../models/x", "/models/x", "C:/models/x", "cfg/client.vdf"):
@@ -236,6 +259,31 @@ class RetargetingTests(unittest.TestCase):
         self.assertIn("m_nBody", text)
         self.assertIn("targetBase", text)
         self.assertIn("halo", text)
+
+    def test_enable_retarget_patches_copied_mdl_bodygroup_indexes(self):
+        source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Hoshino Himiko"
+        target_model = r"C:\Users\user\Desktop\Female_Shuichi_Addon_Extracts\2562456244_PlayerModels_ST\models\dro\player\characters1\char9\char9.mdl"
+        if not os.path.exists(os.path.join(source_pack, "models/dro/player/characters3/char12/char12.mdl")) or not os.path.exists(target_model):
+            self.skipTest("real Hoshino/Junko models not available")
+        cfg = {"gmod_path": self.tempdir}
+        pack = {"name": "Hoshino Himiko", "slug": "ovr_hoshino_himiko", "folder": source_pack}
+        target = om.find_target({}, "Junko Enoshima (Default)")
+
+        om.enable(cfg, pack, target)
+
+        mdl_path = os.path.join(
+            self.tempdir,
+            "addons",
+            "ovr_hoshino_himiko__junko_enoshima__default",
+            "models/dro/player/characters1/char9/char9.mdl",
+        )
+        groups = {group["index"]: group for group in om.parse_mdl_bodygroups(mdl_path)}
+        self.assertEqual("glove", groups[3]["name"])
+        self.assertEqual(1, groups[3]["base"])
+        self.assertEqual("tie", groups[4]["name"])
+        self.assertEqual(2, groups[4]["base"])
+        self.assertEqual("skirt", groups[6]["name"])
+        self.assertEqual(4, groups[6]["base"])
 
     def test_disable_removes_default_and_retargeted_addons_for_pack(self):
         addons = os.path.join(self.tempdir, "addons")

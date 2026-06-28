@@ -155,6 +155,64 @@ def bodygroup_compat_map(target_groups, override_groups):
     return mapping
 
 
+def bodygroup_reorder_plan(target_groups, override_groups):
+    compat = bodygroup_compat_map(target_groups, override_groups)
+    plan = {}
+    for target_index, item in compat.items():
+        plan[int(target_index)] = int(item["override_index"])
+    return plan
+
+
+def patch_mdl_bodygroup_order(path, target_groups, override_groups):
+    plan = bodygroup_reorder_plan(target_groups, override_groups)
+    if not plan:
+        return False
+    with open(path, "rb") as f:
+        data = bytearray(f.read())
+    if len(data) < 240:
+        return False
+    try:
+        numbodyparts, bodypartindex = struct.unpack_from("<ii", data, 232)
+    except struct.error:
+        return False
+    if numbodyparts <= 0 or bodypartindex <= 0:
+        return False
+    records = []
+    for index in range(numbodyparts):
+        offset = bodypartindex + index * 16
+        if offset + 16 > len(data):
+            return False
+        sznameindex, nummodels, base, modelindex = struct.unpack_from("<iiii", data, offset)
+        records.append({
+            "offset": offset,
+            "sznameindex": sznameindex,
+            "nummodels": nummodels,
+            "base": base,
+            "modelindex": modelindex,
+            "raw": bytes(data[offset:offset + 16]),
+        })
+    new_records = list(records)
+    for target_index, override_index in plan.items():
+        if 0 <= target_index < len(new_records) and 0 <= override_index < len(records):
+            source = records[override_index]
+            target = records[target_index]
+            target_group = next((g for g in target_groups if int(g.get("index", -1)) == target_index), None)
+            new_records[target_index] = {
+                "offset": target["offset"],
+                "sznameindex": source["offset"] + source["sznameindex"] - target["offset"],
+                "nummodels": source["nummodels"],
+                "base": int((target_group or {}).get("base") or target["base"] or source["base"]),
+                "modelindex": source["offset"] + source["modelindex"] - target["offset"],
+                "raw": source["raw"],
+            }
+    for index, record in enumerate(new_records):
+        offset = bodypartindex + index * 16
+        struct.pack_into("<iiii", data, offset, record["sznameindex"], record["nummodels"], record["base"], record["modelindex"])
+    with open(path, "wb") as f:
+        f.write(data)
+    return True
+
+
 def safe_game_path(path, allow_empty=True, strip_ext=False):
     raw = str(path or "").replace("\\", "/").strip()
     if raw.startswith("/") or os.path.isabs(raw) or (len(raw) > 1 and raw[1] == ":"):
@@ -496,6 +554,17 @@ def write_bodygroup_compat_lua(dest_folder, pack, target, source):
     return True
 
 
+def patch_retargeted_model_bodygroups(dest_folder, pack, target, source):
+    source_mdl = mdl_path_from_base(pack["folder"], source.get("model_base", ""))
+    target_reference_mdl = find_known_target_mdl(target)
+    copied_mdl = mdl_path_from_base(dest_folder, target.get("model_base", ""))
+    if not (os.path.exists(source_mdl) and os.path.exists(target_reference_mdl) and os.path.exists(copied_mdl)):
+        return False
+    override_groups = parse_mdl_bodygroups(source_mdl)
+    target_groups = parse_mdl_bodygroups(target_reference_mdl)
+    return patch_mdl_bodygroup_order(copied_mdl, target_groups, override_groups)
+
+
 def read_source_target_from_json(folder):
     path = os.path.join(folder, "override.json")
     if not os.path.exists(path):
@@ -650,6 +719,7 @@ def enable(cfg, pack, target=None):
             if not source.get("model_base"):
                 raise ValueError("Could not infer this pack's source model path for retargeting.")
             copy_pack_tree(pack["folder"], dest, source, target)
+            patch_retargeted_model_bodygroups(dest, pack, target, source)
             write_bodygroup_compat_lua(dest, pack, target, source)
         else:
             copy_pack_tree(pack["folder"], dest)
