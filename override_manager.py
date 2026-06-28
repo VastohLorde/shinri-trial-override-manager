@@ -791,8 +791,12 @@ def make_sprite_group_slot(group_name, index):
     return (label, f"{group['prefix']}_{index}.vtf")
 
 
+def make_sprite_group_slots(group_name, count):
+    return [make_sprite_group_slot(group_name, i) for i in range(1, max(0, int(count)) + 1)]
+
+
 def make_talk_sprite_slots(count):
-    return [make_sprite_group_slot("Talk", i) for i in range(1, max(0, int(count)) + 1)]
+    return make_sprite_group_slots("Talk", count)
 
 
 SPRITE_SLOTS = [
@@ -1230,8 +1234,35 @@ class App(tk.Tk):
         sprite_rows = []
         status = tk.StringVar(value="")
 
-        form = ttk.Frame(win, padding=10)
-        form.pack(fill="both", expand=True)
+        scroll_wrap = ttk.Frame(win)
+        scroll_wrap.pack(fill="both", expand=True)
+        canvas = tk.Canvas(scroll_wrap, borderwidth=0, highlightthickness=0)
+        yscroll = ttk.Scrollbar(scroll_wrap, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=yscroll.set)
+        yscroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        form = ttk.Frame(canvas, padding=10)
+        form_window = canvas.create_window((0, 0), window=form, anchor="nw")
+
+        def update_scroll_region(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def resize_form(event):
+            canvas.itemconfigure(form_window, width=event.width)
+
+        def wheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def bind_wheel(_event=None):
+            canvas.bind_all("<MouseWheel>", wheel)
+
+        def unbind_wheel(_event=None):
+            canvas.unbind_all("<MouseWheel>")
+
+        form.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Configure>", resize_form)
+        canvas.bind("<Enter>", bind_wheel)
+        canvas.bind("<Leave>", unbind_wheel)
 
         def row(label, var, browse=None):
             frame = ttk.Frame(form)
@@ -1315,11 +1346,15 @@ class App(tk.Tk):
 
             ttk.Button(frame, text="Pick", command=choose).pack(side="left")
             ttk.Button(frame, text="Clear", command=lambda: path_var.set("")).pack(side="left", padx=3)
-            sprite_rows.append({
+            row_data = {
+                "group": group_name,
                 "label": label,
                 "path_var": path_var,
                 "filename_var": filename_var,
-            })
+            }
+            sprite_rows.append(row_data)
+            update_scroll_region()
+            return row_data
 
         for group in SPRITE_GROUPS:
             group_state = {"count": 0}
@@ -1331,9 +1366,27 @@ class App(tk.Tk):
 
             def add_group_sprite(group_name=group["name"], group_rows=rows, state=group_state):
                 state["count"] += 1
-                add_sprite_row(group_rows, group_name, state["count"])
+                return add_sprite_row(group_rows, group_name, state["count"])
+
+            def pick_multiple(group_name=group["name"], add_func=add_group_sprite):
+                paths = filedialog.askopenfilenames(
+                    parent=win,
+                    title=f"Select {group_name} sprites",
+                    filetypes=[("Game sprite", "*.vtf *.vmt")],
+                )
+                if not paths:
+                    return
+                empty_rows = [
+                    row_data for row_data in sprite_rows
+                    if row_data["group"] == group_name and not row_data["path_var"].get().strip()
+                ]
+                for path in paths:
+                    row_data = empty_rows.pop(0) if empty_rows else add_func()
+                    row_data["path_var"].set(path)
+                update_scroll_region()
 
             ttk.Button(header, text=f"Add {group['name']}", command=add_group_sprite).pack(side="left")
+            ttk.Button(header, text="Pick Multiple", command=pick_multiple).pack(side="left", padx=6)
             for _ in range(int(group["initial"])):
                 add_group_sprite()
 
