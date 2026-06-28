@@ -1090,6 +1090,7 @@ class App(tk.Tk):
         ttk.Button(bot, text="Delete", command=self.delete_selected).pack(side="left")
         ttk.Button(bot, text="Toggle (dbl-click)", command=self.toggle).pack(side="left")
         ttk.Button(bot, text="Open overrides folder", command=self.open_overrides).pack(side="left", padx=4)
+        ttk.Button(bot, text="Override Maker", command=self.override_maker).pack(side="left")
         ttk.Button(bot, text="Community Packs", command=self.community_packs).pack(side="left")
         ttk.Button(bot, text="Refresh", command=self.refresh).pack(side="right")
         ttk.Button(bot, text="Tutorial", command=self.show_tutorial).pack(side="right", padx=4)
@@ -1185,6 +1186,150 @@ class App(tk.Tk):
             os.startfile(OVERRIDES_DIR)  # noqa (Windows)
         except Exception:
             messagebox.showinfo("Overrides folder", OVERRIDES_DIR)
+
+    def override_maker(self):
+        win = tk.Toplevel(self)
+        win.title("Override Maker")
+        win.geometry("760x620")
+        win.minsize(680, 520)
+        win.transient(self)
+
+        pack_name = tk.StringVar()
+        skin = tk.StringVar(value="Local model + sprites")
+        source_name = tk.StringVar(value="Himiko Yumeno")
+        model_path = tk.StringVar()
+        arms_path = tk.StringVar()
+        material_root = tk.StringVar()
+        sprite_dir = tk.StringVar()
+        description = tk.StringVar(value="Created with Override Maker.")
+        sprite_vars = {label: tk.StringVar() for label, _filename in SPRITE_SLOTS}
+        status = tk.StringVar(value="")
+
+        form = ttk.Frame(win, padding=10)
+        form.pack(fill="both", expand=True)
+
+        def row(label, var, browse=None):
+            frame = ttk.Frame(form)
+            frame.pack(fill="x", pady=3)
+            ttk.Label(frame, text=label, width=18).pack(side="left")
+            ttk.Entry(frame, textvariable=var).pack(side="left", fill="x", expand=True, padx=6)
+            if browse:
+                ttk.Button(frame, text="Browse", command=browse).pack(side="left")
+            return frame
+
+        def update_source(_event=None):
+            target = find_target(self.cfg, source_name.get())
+            if target:
+                sprite_dir.set(target.get("sprite_dir", ""))
+
+        def browse_model():
+            path = filedialog.askopenfilename(parent=win, title="Select main .mdl", filetypes=[("Source model", "*.mdl")])
+            if path:
+                model_path.set(path)
+                root = path
+                while root and os.path.basename(root).lower() != "models":
+                    parent = os.path.dirname(root)
+                    if parent == root:
+                        break
+                    root = parent
+                if os.path.basename(root).lower() == "models":
+                    material_root.set(os.path.dirname(root))
+
+        def browse_arms():
+            path = filedialog.askopenfilename(parent=win, title="Select arms .mdl", filetypes=[("Source model", "*.mdl")])
+            if path:
+                arms_path.set(path)
+
+        def browse_material_root():
+            path = filedialog.askdirectory(parent=win, title="Select extracted addon folder with materials/")
+            if path:
+                material_root.set(path)
+
+        row("Pack name", pack_name)
+        row("Skin / variant", skin)
+
+        source_frame = ttk.Frame(form)
+        source_frame.pack(fill="x", pady=3)
+        ttk.Label(source_frame, text="Source character", width=18).pack(side="left")
+        source_combo = ttk.Combobox(
+            source_frame,
+            textvariable=source_name,
+            state="readonly",
+            values=[t["name"] for t in available_targets(self.cfg) if t["name"] != DEFAULT_TARGET_NAME],
+        )
+        source_combo.pack(side="left", fill="x", expand=True, padx=6)
+        source_combo.bind("<<ComboboxSelected>>", update_source)
+
+        row("Main model", model_path, browse_model)
+        row("Arms model", arms_path, browse_arms)
+        row("Material root", material_root, browse_material_root)
+        row("Sprite folder", sprite_dir)
+        row("Description", description)
+
+        sprite_box = ttk.LabelFrame(form, text="Manual sprite assignments")
+        sprite_box.pack(fill="both", expand=True, pady=(10, 4))
+        for label, filename in SPRITE_SLOTS:
+            frame = ttk.Frame(sprite_box, padding=(6, 3))
+            frame.pack(fill="x")
+            ttk.Label(frame, text=f"{label} -> {filename}", width=28).pack(side="left")
+            ttk.Entry(frame, textvariable=sprite_vars[label]).pack(side="left", fill="x", expand=True, padx=6)
+
+            def choose(slot_label=label):
+                path = filedialog.askopenfilename(
+                    parent=win,
+                    title=f"Select {slot_label} sprite",
+                    filetypes=[("Game sprite", "*.vtf *.vmt")],
+                )
+                if path:
+                    sprite_vars[slot_label].set(path)
+
+            ttk.Button(frame, text="Pick", command=choose).pack(side="left")
+            ttk.Button(frame, text="Clear", command=lambda slot_label=label: sprite_vars[slot_label].set("")).pack(side="left", padx=3)
+
+        ttk.Label(form, textvariable=status, foreground="#a05").pack(fill="x", pady=(4, 0))
+
+        def create():
+            target = find_target(self.cfg, source_name.get())
+            if not target:
+                messagebox.showerror("Override Maker", "Select a source character.", parent=win)
+                return
+            assignments = {}
+            for label, filename in SPRITE_SLOTS:
+                path = sprite_vars[label].get().strip()
+                if path:
+                    assignments[label] = {"path": path, "filename": filename}
+            output = os.path.join(OVERRIDES_DIR, pack_folder_name(pack_name.get()))
+            if os.path.exists(output):
+                if not messagebox.askyesno("Replace pack", f"Replace existing local override folder?\n\n{output}", parent=win):
+                    return
+                shutil.rmtree(output)
+            try:
+                created = create_override_pack({
+                    "name": pack_name.get(),
+                    "character": target["name"],
+                    "skin": skin.get(),
+                    "description": description.get(),
+                    "source_target": target,
+                    "main_model": model_path.get(),
+                    "arms_model": arms_path.get(),
+                    "material_root": material_root.get(),
+                    "sprite_dir": sprite_dir.get(),
+                    "sprite_assignments": assignments,
+                })
+            except Exception as e:
+                status.set(str(e))
+                messagebox.showerror("Override Maker", str(e), parent=win)
+                return
+            self.refresh()
+            messagebox.showinfo("Override Maker", f"Created override pack:\n\n{created}", parent=win)
+            win.destroy()
+
+        buttons = ttk.Frame(win, padding=(10, 0, 10, 10))
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Create Override", command=create).pack(side="right")
+        ttk.Button(buttons, text="Cancel", command=win.destroy).pack(side="right", padx=6)
+
+        update_source()
 
     def community_packs(self):
         win = tk.Toplevel(self)
