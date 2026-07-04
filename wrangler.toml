@@ -1,0 +1,8 @@
+name = "ovr-presence"
+main = "presence_worker.js"
+compatibility_date = "2024-11-01"
+
+# KV binding is filled in after we create the namespace (npx wrangler kv namespace create PRESENCE).
+# [[kv_namespaces]]
+# binding = "PRESENCE"
+# id = "REPLACE_WITH_NAMESPACE_ID"

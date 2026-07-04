@@ -360,6 +360,19 @@ class RetargetingTests(unittest.TestCase):
         self.assertIn("models/dro/player/characters3/char12/char12.mdl", content)
         self.assertIn("GetInternalVariable('m_nBody')", content)
 
+    def test_bodygroup_compat_lua_combines_duplicate_override_targets(self):
+        mapping = {
+            3: {"target_base": 1, "target_count": 2, "override_index": 3, "override_count": 3, "override_name": "outfit"},
+            4: {"target_base": 2, "target_count": 2, "override_index": 3, "override_count": 3, "override_name": "outfit"},
+            5: {"target_base": 4, "target_count": 2, "override_index": 3, "override_count": 3, "override_name": "outfit"},
+        }
+
+        content = om.generate_bodygroup_compat_lua("models/example.mdl", mapping)
+
+        self.assertIn("local OVERRIDES = {", content)
+        self.assertIn("sources = {", content)
+        self.assertEqual(1, content.count("if ply:GetBodygroup(item.override) ~= value then"))
+
     def test_bodygroup_name_patch_can_append_longer_labels(self):
         source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Hoshino Himiko"
         if not os.path.exists(os.path.join(source_pack, "models/dro/player/characters3/char12/char12.mdl")):

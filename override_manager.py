@@ -23,8 +23,10 @@ import tempfile
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 import urllib.request
+import urllib.parse
 import zipfile
 import time
+import uuid
 try:
     import translate_cache
 except ImportError:
@@ -48,7 +50,10 @@ OLD_COMMUNITY_INDEX_URLS = {
     # Pre-rename URL: auto-migrate existing configs to the new repo path.
     "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs.json",
 }
-APP_VERSION = "1.17"
+# Cloud presence backend (Cloudflare Worker - see presence_worker.js). Baked in so
+# all app users share it with zero config. Empty string = cloud presence disabled.
+DEFAULT_PRESENCE_URL = ""
+APP_VERSION = "1.20"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -777,15 +782,32 @@ def lua_quote(value):
 
 
 def generate_bodygroup_compat_lua(model_path, mapping):
+    grouped = {}
+    for target_index in sorted(mapping):
+        item = mapping[target_index]
+        override_index = int(item["override_index"])
+        grouped.setdefault(override_index, {
+            "override": override_index,
+            "count": int(item["override_count"]),
+            "name": item.get("override_name", ""),
+            "sources": [],
+        })["sources"].append({
+            "target_base": int(item.get("target_base") or 1),
+            "target_count": int(item.get("target_count") or 1),
+        })
     lines = [
         "if SERVER then return end",
         "local MODEL = " + lua_quote(normalize_game_path(model_path).lower()),
-        "local MAP = {",
+        "local OVERRIDES = {",
     ]
-    for target_index in sorted(mapping):
-        item = mapping[target_index]
+    for override_index in sorted(grouped):
+        item = grouped[override_index]
+        sources = ", ".join(
+            f"{{ targetBase = {source['target_base']}, targetCount = {source['target_count']} }}"
+            for source in item["sources"]
+        )
         lines.append(
-            f"  [{int(target_index)}] = {{ targetBase = {int(item.get('target_base') or 1)}, targetCount = {int(item.get('target_count') or 1)}, override = {int(item['override_index'])}, count = {int(item['override_count'])}, name = {lua_quote(item.get('override_name', ''))} }},"
+            f"  {{ override = {item['override']}, count = {item['count']}, name = {lua_quote(item.get('name', ''))}, sources = {{ {sources} }} }},"
         )
     lines += [
         "}",
@@ -804,10 +826,14 @@ def generate_bodygroup_compat_lua(model_path, mapping):
         "  if ply.__ovrBodygroupCompatBusy then return end",
         "  ply.__ovrBodygroupCompatBusy = true",
         "  local body = rawBody(ply)",
-        "  for _, item in pairs(MAP) do",
+        "  for _, item in ipairs(OVERRIDES) do",
         "    local value = 0",
-        "    if item.targetBase and item.targetBase > 0 and item.targetCount and item.targetCount > 1 then",
-        "      value = math.floor(body / item.targetBase) % item.targetCount",
+        "    for _, source in ipairs(item.sources or {}) do",
+        "      local sourceValue = 0",
+        "      if source.targetBase and source.targetBase > 0 and source.targetCount and source.targetCount > 1 then",
+        "        sourceValue = math.floor(body / source.targetBase) % source.targetCount",
+        "      end",
+        "      if sourceValue > value then value = sourceValue end",
         "    end",
         "    if item.count and item.count > 0 then value = math.Clamp(value, 0, item.count - 1) end",
         "    if ply:GetBodygroup(item.override) ~= value then ply:SetBodygroup(item.override, value) end",
@@ -1219,6 +1245,42 @@ def read_json_url(url):
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read(2_000_000)
     return json.loads(data.decode("utf-8"))
+
+
+def http_post_json(url, obj, timeout=8):
+    body = json.dumps(obj).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers={
+        "Content-Type": "application/json", "User-Agent": "GModOverrideManager/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read(1_000_000).decode("utf-8"))
+
+
+def http_get_json(url, timeout=8):
+    req = urllib.request.Request(url, headers={"User-Agent": "GModOverrideManager/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read(1_000_000).decode("utf-8"))
+
+
+def steam_persona_name(cfg):
+    """Best-effort: the Steam display name to show other users, from loginusers.vdf."""
+    for root in _steam_roots(cfg):
+        p = os.path.join(root, "config", "loginusers.vdf")
+        try:
+            raw = open(p, "rb").read()
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                text = raw.decode("latin1")
+        except Exception:
+            continue
+        # Prefer the most-recently-used account; fall back to the first name found.
+        recent = re.search(r'"PersonaName"\s*"([^"]*)"[^}]*?"MostRecent"\s*"1"', text, re.S)
+        if recent:
+            return recent.group(1)
+        m = re.search(r'"PersonaName"\s*"([^"]*)"', text)
+        if m:
+            return m.group(1)
+    return ""
 
 
 def parse_version(text):
@@ -1753,9 +1815,15 @@ def condebug_enabled(cfg):
         return False
 
 
+# Windowed (no-console) exes pop a visible cmd window for every subprocess call
+# unless we pass this flag. Keep it on ALL subprocess calls in this app.
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def gmod_running():
     try:
-        out = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=15).stdout.lower()
+        out = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=15,
+                             creationflags=CREATE_NO_WINDOW).stdout.lower()
         return any(p in out for p in GMOD_PROCS)
     except Exception:
         return False
@@ -1764,20 +1832,47 @@ def gmod_running():
 def kill_gmod():
     for p in GMOD_PROCS:
         try:
-            subprocess.run(["taskkill", "/F", "/IM", p], capture_output=True, timeout=15)
+            subprocess.run(["taskkill", "/F", "/IM", p], capture_output=True, timeout=15,
+                           creationflags=CREATE_NO_WINDOW)
         except Exception:
             pass
 
 
-def launch_gmod(server=""):
-    """Launch GMod via Steam, optionally connecting straight to a server."""
+def steam_exe(cfg):
+    for root in _steam_roots(cfg or {}):
+        exe = os.path.join(root, "steam.exe")
+        if os.path.isfile(exe):
+            return exe
+    return None
+
+
+def launch_gmod(server="", cfg=None, condebug=True):
+    """Launch GMod through Steam with -condebug so it writes console.log (which is
+    how the app detects your server). Uses `steam.exe -applaunch 4000 <args>`, which
+    passes launch arguments WITHOUT editing Steam's stored launch options and works
+    whether or not Steam is already running - so no closing Steam, no config edits.
+    Optionally connects straight to a server via +connect."""
+    exe = steam_exe(cfg)
+    if exe:
+        args = [exe, "-applaunch", STEAM_GMOD_APPID]
+        if condebug:
+            args.append("-condebug")
+        if server:
+            args += ["+connect", server]
+        try:
+            subprocess.Popen(args, creationflags=CREATE_NO_WINDOW, close_fds=True)
+            return True
+        except Exception:
+            pass
+    # Fallback: steam:// URL (can't reliably carry -condebug, but at least launches).
     url = "steam://connect/" + server if server else "steam://rungameid/4000"
     try:
-        os.startfile(url)  # Windows
+        os.startfile(url)
         return True
     except Exception:
         try:
-            subprocess.Popen(["cmd", "/c", "start", "", url], close_fds=True)
+            subprocess.Popen(["cmd", "/c", "start", "", url], close_fds=True,
+                             creationflags=CREATE_NO_WINDOW)
             return True
         except Exception:
             return False
@@ -1809,6 +1904,182 @@ def ensure_console_logging(cfg):
         return False
 
 
+# ----- Auto-set the -condebug launch option (reliable server detection) -----
+# con_logfile via autoexec.cfg is unreliable (GMod often ignores it), so the
+# dependable way to get console.log is Steam's -condebug launch option. We can
+# set it for the user by editing Steam's per-account localconfig.vdf. Steam must
+# be CLOSED when we write, or it overwrites the file with its in-memory copy on
+# exit.
+STEAM_GMOD_APPID = "4000"
+CONDEBUG_FLAG = "-condebug"
+
+
+def _steam_roots(cfg):
+    """Candidate Steam install roots (folders that contain a 'userdata' dir)."""
+    roots, seen, out = [], set(), []
+    gm = cfg.get("gmod_path", DEFAULT_GMOD)
+    # gmod_path = <steam>/steamapps/common/GarrysMod/garrysmod -> up 4 = <steam>
+    p = gm
+    for _ in range(4):
+        p = os.path.dirname(p)
+    if p:
+        roots.append(p)
+    for c in (r"C:\Program Files (x86)\Steam", r"C:\Program Files\Steam"):
+        roots.append(c)
+    try:
+        import winreg
+        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam")
+        val, _ = winreg.QueryValueEx(k, "SteamPath")
+        roots.append(os.path.normpath(val))
+    except Exception:
+        pass
+    for r in roots:
+        key = os.path.normcase(os.path.normpath(r))
+        if key in seen:
+            continue
+        seen.add(key)
+        if os.path.isdir(os.path.join(r, "userdata")):
+            out.append(r)
+    return out
+
+
+def steam_localconfigs(cfg):
+    """Every account's localconfig.vdf under the detected Steam roots."""
+    paths = []
+    for root in _steam_roots(cfg):
+        ud = os.path.join(root, "userdata")
+        try:
+            for acc in os.listdir(ud):
+                p = os.path.join(ud, acc, "config", "localconfig.vdf")
+                if os.path.isfile(p):
+                    paths.append(p)
+        except Exception:
+            pass
+    return paths
+
+
+def steam_running():
+    try:
+        out = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=15,
+                             creationflags=CREATE_NO_WINDOW).stdout.lower()
+        return "steam.exe" in out
+    except Exception:
+        return False
+
+
+def _find_app_block(text, appid):
+    """(open_brace_index, close_brace_index) for the "appid" { ... } block, or None."""
+    m = re.search(r'"' + re.escape(appid) + r'"\s*\{', text)
+    if not m:
+        return None
+    open_i = text.index("{", m.start())
+    depth, i = 0, open_i
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return open_i, i
+        i += 1
+    return None
+
+
+def _set_launch_option(text, appid, flag):
+    """Add `flag` to the app's LaunchOptions. Returns (new_text, status)."""
+    blk = _find_app_block(text, appid)
+    if not blk:
+        return None, "no_app_block"
+    open_i, close_i = blk
+    inner = text[open_i + 1:close_i]
+    lm = re.search(r'("LaunchOptions"\s*")([^"]*)(")', inner)
+    if lm:
+        val = lm.group(2)
+        if flag in val.split():
+            return text, "already"
+        newval = (val + " " + flag).strip()
+        inner2 = inner[:lm.start()] + lm.group(1) + newval + lm.group(3) + inner[lm.end():]
+        status = "updated"
+    else:
+        inner2 = '\n\t\t\t\t\t"LaunchOptions"\t\t"' + flag + '"' + inner
+        status = "added"
+    return text[:open_i + 1] + inner2 + text[close_i:], status
+
+
+def enable_condebug_launch_option(cfg, flag=CONDEBUG_FLAG):
+    """Edit Steam localconfig.vdf(s) to add -condebug to GMod's launch options.
+    Steam must be closed first. Returns (changed_any, detail_string)."""
+    files = steam_localconfigs(cfg)
+    if not files:
+        return False, "Couldn't find Steam's userdata/localconfig.vdf."
+    changed, notes = False, []
+    for p in files:
+        try:
+            raw = open(p, "rb").read()
+            try:
+                text, enc = raw.decode("utf-8"), "utf-8"
+            except UnicodeDecodeError:
+                text, enc = raw.decode("latin1"), "latin1"  # byte-preserving fallback
+        except Exception as e:
+            notes.append(f"read fail: {e}")
+            continue
+        newtext, status = _set_launch_option(text, STEAM_GMOD_APPID, flag)
+        if newtext is None:
+            continue  # this account doesn't own/track GMod
+        if status == "already":
+            changed = True
+            notes.append("already set")
+            continue
+        try:
+            bak = p + ".ovrbak"
+            if not os.path.exists(bak):
+                shutil.copy2(p, bak)
+            open(p, "wb").write(newtext.encode(enc))
+            changed = True
+            notes.append(status)
+        except Exception as e:
+            notes.append(f"write fail: {e}")
+    return changed, "; ".join(notes) if notes else "no GMod entry found in any account"
+
+
+def condebug_already_set(cfg, flag=CONDEBUG_FLAG):
+    """True if any account already has -condebug in GMod's launch options."""
+    for p in steam_localconfigs(cfg):
+        try:
+            raw = open(p, "rb").read()
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                text = raw.decode("latin1")
+        except Exception:
+            continue
+        blk = _find_app_block(text, STEAM_GMOD_APPID)
+        if not blk:
+            continue
+        inner = text[blk[0] + 1:blk[1]]
+        lm = re.search(r'"LaunchOptions"\s*"([^"]*)"', inner)
+        if lm and flag in lm.group(1).split():
+            return True
+    return False
+
+
+def start_steam(cfg):
+    """Relaunch Steam after we've closed it to edit launch options."""
+    for root in _steam_roots(cfg):
+        exe = os.path.join(root, "steam.exe")
+        if os.path.isfile(exe):
+            try:
+                subprocess.Popen([exe], close_fds=True)
+                return True
+            except Exception:
+                pass
+    try:
+        os.startfile("steam://open/main")
+        return True
+    except Exception:
+        return False
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1820,23 +2091,29 @@ class App(tk.Tk):
         self.community_index = None
         self._presence_running = False
         self.detected_server = ""
+        self.cloud_peers = []          # other manager users on my server (from the cloud)
+        self._cloud_running = False
+        if not self.cfg.get("client_id"):
+            self.cfg["client_id"] = uuid.uuid4().hex
+            save_config(self.cfg)
         self._build()
         self.refresh()
         self.update_presence_button()
         # Non-blocking update check shortly after the window appears.
         self.after(1200, self.start_update_check)
         try:
-            ensure_console_logging(self.cfg)  # enable server detection with no -condebug
+            ensure_console_logging(self.cfg)  # belt-and-suspenders; autoexec is unreliable
         except Exception:
             pass
         self.after(2000, self.server_monitor)
         if self.cfg.get("presence_enabled", True):
             try:
-                install_presence_addon(self.cfg)
+                install_presence_addon(self.cfg)  # optional in-game bonus when Lua is allowed
             except Exception:
                 pass
             self.ensure_community_index(then=self.refresh_presence_manifest)
             self.start_presence_loop()
+            self.start_cloud_presence()
 
     def _build(self):
         top = ttk.Frame(self, padding=8)
@@ -1904,7 +2181,14 @@ class App(tk.Tk):
         self.server_var = tk.StringVar(value="Server: (unknown)")
         ttk.Label(conn, textvariable=self.server_var, foreground="#1a5fb4").pack(side="left")
         ttk.Button(conn, text="Restart GMod & apply overrides", command=self.restart_and_apply).pack(side="left", padx=8)
-        ttk.Button(conn, text="?", width=2, command=self.condebug_help).pack(side="left")
+        ttk.Button(conn, text="Turn on detection", command=self.enable_condebug).pack(side="left")
+        ttk.Button(conn, text="?", width=2, command=self.condebug_help).pack(side="left", padx=4)
+
+        conn2 = ttk.Frame(self, padding=(8, 0, 8, 4))
+        conn2.pack(fill="x")
+        self.peers_var = tk.StringVar(value="")
+        ttk.Label(conn2, textvariable=self.peers_var, foreground="#7a1a7a").pack(side="left")
+        ttk.Button(conn2, text="See server users", command=self.show_server_users).pack(side="left", padx=8)
 
         self.note = tk.StringVar(value="")
         ttk.Label(self, textvariable=self.note, padding=(8, 0, 8, 8), foreground="#a05").pack(fill="x")
@@ -2915,6 +3199,128 @@ class App(tk.Tk):
         self._presence_running = True
         self.after(1500, self.presence_loop)
 
+    # ----- Cloud presence (Lua-free: works on servers that block clientside Lua) -----
+    def presence_url(self):
+        return (self.cfg.get("presence_url") or DEFAULT_PRESENCE_URL or "").strip().rstrip("/")
+
+    def display_name(self):
+        name = (self.cfg.get("display_name") or "").strip()
+        if not name:
+            name = steam_persona_name(self.cfg) or "Player"
+        return name[:64]
+
+    def my_community_packs(self):
+        """Names of community packs I currently have ENABLED (what I advertise)."""
+        names = {e["name"] for e in (self.community_index or [])}
+        mine = []
+        for p in self.packs:
+            if p["name"] in names and enabled_target_name(self.cfg, p):
+                mine.append(p["name"])
+        return mine
+
+    def start_cloud_presence(self):
+        if self._cloud_running:
+            return
+        self._cloud_running = True
+        self.after(2500, self.cloud_presence_tick)
+
+    def cloud_presence_tick(self):
+        if not self.cfg.get("presence_enabled", True):
+            self._cloud_running = False
+            return
+        url = self.presence_url()
+        server = getattr(self, "detected_server", "")
+        if url and server:
+            payload = {"server": server, "id": self.cfg.get("client_id", ""),
+                       "name": self.display_name(), "packs": self.my_community_packs()}
+            peers_url = f"{url}/peers?server={urllib.parse.quote(server)}&exclude={urllib.parse.quote(payload['id'])}"
+
+            def work():
+                peers = []
+                try:
+                    http_post_json(f"{url}/beat", payload)
+                    peers = (http_get_json(peers_url) or {}).get("peers", []) or []
+                except Exception:
+                    peers = self.cloud_peers  # keep last-known on a transient network blip
+                self.after(0, lambda: self._apply_cloud_peers(peers))
+            threading.Thread(target=work, daemon=True).start()
+        else:
+            self._apply_cloud_peers([])
+        self.after(20000, self.cloud_presence_tick)  # heartbeat well within the 90s TTL
+
+    def _apply_cloud_peers(self, peers):
+        self.cloud_peers = peers or []
+        if hasattr(self, "peers_var"):
+            n = len(self.cloud_peers)
+            if not self.presence_url():
+                self.peers_var.set("")
+            elif not getattr(self, "detected_server", ""):
+                self.peers_var.set("Server users: (join a server)")
+            else:
+                self.peers_var.set(f"Server users: {n}" + (" - click to see" if n else ""))
+
+    def install_pack_by_name(self, name, target=None):
+        """Install + enable a community pack by name (only approved ones). Returns ok."""
+        entry = next((e for e in (self.community_index or []) if e["name"] == name), None)
+        if not entry:
+            messagebox.showwarning("Community Presence",
+                                   f"'{name}' isn't in your community index, so it can't be installed.")
+            return False
+        try:
+            existing = next((p for p in self.packs if p["name"] == name), None)
+            if not existing:
+                install_community_pack(entry)
+                self.packs = scan_overrides()
+                existing = next((p for p in self.packs if p["name"] == name), None)
+            if existing:
+                tgt = find_target(self.cfg, target) if target and target != DEFAULT_TARGET_NAME else None
+                enable(self.cfg, existing, tgt)
+                self.refresh()
+                return True
+        except Exception as e:
+            messagebox.showerror("Community Presence", f"Couldn't install '{name}':\n{e}")
+        return False
+
+    def show_server_users(self):
+        if not self.presence_url():
+            messagebox.showinfo("Server users",
+                                "Community Presence isn't configured yet (no backend URL set).")
+            return
+        server = getattr(self, "detected_server", "")
+        if not server:
+            messagebox.showinfo("Server users",
+                                "No server detected yet. Join a server (with detection on) and try again.")
+            return
+        peers = list(self.cloud_peers)
+        win = tk.Toplevel(self)
+        win.title("Override Manager - users on your server")
+        win.geometry("480x360")
+        ttk.Label(win, text=f"On {server}:", padding=8, foreground="#1a5fb4").pack(anchor="w")
+        if not peers:
+            ttk.Label(win, text="No other Override Manager users detected here right now.",
+                      padding=8, wraplength=440, foreground="#666").pack(anchor="w")
+            return
+        have = {p["name"] for p in self.packs}
+        frame = ttk.Frame(win, padding=(8, 0))
+        frame.pack(fill="both", expand=True)
+        for peer in peers:
+            box = ttk.LabelFrame(frame, text=peer.get("name", "Player"), padding=6)
+            box.pack(fill="x", pady=4)
+            packs = [p for p in (peer.get("packs") or [])]
+            if not packs:
+                ttk.Label(box, text="(no shared community packs)", foreground="#888").pack(anchor="w")
+            for pk in packs:
+                row = ttk.Frame(box)
+                row.pack(fill="x", pady=1)
+                ttk.Label(row, text=pk).pack(side="left")
+                if pk in have:
+                    ttk.Label(row, text="you have this", foreground="#1a7f1a").pack(side="right")
+                else:
+                    ttk.Button(row, text="Install", width=10,
+                               command=lambda n=pk, w=win: (self.install_pack_by_name(n) and
+                                                            (w.destroy(), self.show_server_users()))
+                               ).pack(side="right")
+
     def update_presence_button(self):
         self.presence_btn_text.set(
             "Community Presence: ON" if self.cfg.get("presence_enabled", True) else "Community Presence: OFF")
@@ -2935,16 +3341,15 @@ class App(tk.Tk):
                 return
             self.ensure_community_index(then=self.refresh_presence_manifest)
             self.start_presence_loop()
+            self.start_cloud_presence()
             messagebox.showinfo(
                 "Community Presence",
                 "Community Presence is ON.\n\n"
-                "IMPORTANT: fully restart GMod once so the in-game part loads (addons only load when GMod "
-                "starts, not when you reconnect). You'll then see a blue \"Community Presence active\" message "
-                "in chat when you spawn.\n\n"
-                "To see other users and choose what to install, open the menu with the console command "
-                "ovr_menu (most reliable), or type !ovr in chat. You're never forced to accept.\n\n"
-                "Keep this app open so accepted installs can finish; you'll then be asked to reconnect to "
-                "apply them.")
+                "While you're on a server (with detection on), the app shows other Override Manager users "
+                "on that same server. Click \"See server users\" to view them and install any community "
+                "packs they're using - all from this window, no in-game steps needed.\n\n"
+                "(If the server happens to allow clientside Lua, you also get the in-game chat notice as a "
+                "bonus, but it's not required.)")
         else:
             try:
                 remove_presence_addon(self.cfg)
@@ -2962,23 +3367,48 @@ class App(tk.Tk):
             elif condebug_enabled(self.cfg):
                 self.server_var.set("Server: not connected")
             else:
-                self.server_var.set("Server: unknown - restart GMod once to enable detection (?)")
+                self.server_var.set("Server: unknown - click \"Turn on detection\" to relaunch GMod with logging")
         except Exception:
             pass
         self.after(5000, self.server_monitor)
 
     def condebug_help(self):
-        ok = ensure_console_logging(self.cfg)
-        extra = ("" if ok else
-                 "\n\n(Couldn't write cfg/autoexec.cfg - check the GMod folder above.)")
         messagebox.showinfo(
             "Detecting your server",
-            "The app has set this up automatically: it added `con_logfile` to your GMod cfg/autoexec.cfg so "
-            "GMod logs its console to console.log. That's a config command, not Lua, so the server can't block "
-            "it - no -condebug needed.\n\n"
-            "Just fully restart GMod once for it to take effect, and the Connection row will show your server.\n\n"
-            "If your setup ignores it, the fallback is to add -condebug to GMod's launch options "
-            "(Steam -> Garry's Mod -> Properties -> Launch Options)." + extra)
+            "The app finds your current server by reading GMod's console.log. GMod only writes that file "
+            "when it's launched with the -condebug option.\n\n"
+            "Click \"Turn on detection\" (or just use \"Restart GMod & apply overrides\") and the app "
+            "relaunches GMod through Steam with -condebug for you. Steam stays open - nothing in Steam's "
+            "settings is changed; the option is passed only for that launch.\n\n"
+            "Then join your server and the Connection row will show it within a few seconds.\n\n"
+            "Prefer it permanent? Steam -> right-click Garry's Mod -> Properties -> Launch Options -> add "
+            "-condebug (then every launch, however you start it, logs the console).")
+
+    def enable_condebug(self):
+        """Relaunch GMod through Steam WITH -condebug so it writes console.log.
+        Uses `steam.exe -applaunch` - no closing Steam, no editing Steam config."""
+        server = getattr(self, "detected_server", "") or detect_current_server(self.cfg)
+        running = gmod_running()
+        prompt = ("To detect your server, GMod has to be running with logging on. The app will "
+                  + ("close GMod and reopen it" if running else "launch GMod")
+                  + " through Steam with the -condebug option.")
+        if server:
+            prompt += f"\n\nIt'll reconnect you to {server}."
+        else:
+            prompt += "\n\nAfter it starts, just join your server as usual."
+        prompt += "\n\n(Steam stays open the whole time. Continue?)"
+        if not messagebox.askyesno("Turn on server detection", prompt):
+            return
+        if running:
+            kill_gmod()
+            self.after(3500, lambda: launch_gmod(server, self.cfg))
+        else:
+            launch_gmod(server, self.cfg)
+        messagebox.showinfo(
+            "Server detection on",
+            "GMod is launching with logging enabled" +
+            (f" and reconnecting to {server}" if server else "") +
+            ".\n\nOnce you're on a server, the Connection row will show it within a few seconds.")
 
     def restart_and_apply(self):
         server = getattr(self, "detected_server", "") or detect_current_server(self.cfg)
@@ -2991,12 +3421,13 @@ class App(tk.Tk):
         if not messagebox.askyesno("Restart GMod & apply", msg):
             return
         if not gmod_running():
-            launch_gmod(server)
+            launch_gmod(server, self.cfg)
             messagebox.showinfo("Launching GMod",
-                                "Launching GMod" + (f" and connecting to {server}" if server else "") + ".")
+                                "Launching GMod" + (f" and connecting to {server}" if server else "") +
+                                " with server detection on.")
             return
         kill_gmod()
-        self.after(3500, lambda: launch_gmod(server))
+        self.after(3500, lambda: launch_gmod(server, self.cfg))
         messagebox.showinfo(
             "Restarting GMod",
             "Closing GMod... it will reopen" + (f" and reconnect to {server}" if server else "") +
