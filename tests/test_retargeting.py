@@ -124,10 +124,13 @@ class RetargetingTests(unittest.TestCase):
 
         self.assertEqual("materials/dro/sprites/characters/dr_v3/angie yonaga", target["sprite_dir"])
 
-    def test_update_button_is_in_upper_settings_row(self):
+    def test_update_button_stays_in_bottom_row_and_window_is_tall_enough(self):
         source = inspect.getsource(om.App._build)
+        init_source = inspect.getsource(om.App.__init__)
 
-        self.assertLess(source.index("Check for Updates"), source.index("conn = ttk.Frame"))
+        self.assertGreater(source.index("Check for Updates"), source.index("bot4 = ttk.Frame"))
+        self.assertIn('self.geometry("760x540")', init_source)
+        self.assertIn('self.minsize(640, 520)', init_source)
 
     def test_extract_workshop_gma_uses_fresh_folder_when_previous_extract_is_locked(self):
         app_dir = os.path.join(self.tempdir, "app")
