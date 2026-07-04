@@ -680,6 +680,24 @@ class ServerDetectTests(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_ensure_console_logging_writes_autoexec_once_and_preserves_content(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            cfg = {"gmod_path": tmp}
+            self.assertTrue(om.ensure_console_logging(cfg))
+            autoexec = os.path.join(tmp, "cfg", "autoexec.cfg")
+            self.assertIn("con_logfile", open(autoexec, encoding="utf-8").read())
+            om.ensure_console_logging(cfg)  # idempotent
+            self.assertEqual(open(autoexec, encoding="utf-8").read().count("con_logfile"), 1)
+            with open(autoexec, "w", encoding="utf-8") as f:
+                f.write("bind x say hi\n")
+            om.ensure_console_logging(cfg)
+            body = open(autoexec, encoding="utf-8").read()
+            self.assertIn("bind x say hi", body)
+            self.assertIn("con_logfile", body)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

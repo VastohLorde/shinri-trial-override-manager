@@ -48,7 +48,7 @@ OLD_COMMUNITY_INDEX_URLS = {
     # Pre-rename URL: auto-migrate existing configs to the new repo path.
     "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs.json",
 }
-APP_VERSION = "1.16"
+APP_VERSION = "1.17"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -1783,6 +1783,32 @@ def launch_gmod(server=""):
             return False
 
 
+def ensure_console_logging(cfg):
+    """Make GMod write its console to console.log WITHOUT the -condebug launch
+    option, by adding `con_logfile` to cfg/autoexec.cfg. autoexec.cfg holds console
+    commands (not Lua), so the server's anti-Lua block doesn't affect it. Takes
+    effect on the next GMod start. Returns True if enabled or already present."""
+    gmod = cfg.get("gmod_path", DEFAULT_GMOD)
+    cfg_dir = os.path.join(gmod, "cfg")
+    autoexec = os.path.join(cfg_dir, "autoexec.cfg")
+    try:
+        os.makedirs(cfg_dir, exist_ok=True)
+        existing = ""
+        if os.path.exists(autoexec):
+            with open(autoexec, "r", encoding="utf-8", errors="replace") as f:
+                existing = f.read()
+        if "con_logfile" in existing:
+            return True
+        with open(autoexec, "a", encoding="utf-8") as f:
+            if existing and not existing.endswith("\n"):
+                f.write("\n")
+            f.write("// Added by Override Manager: log console so the app can detect your server\n")
+            f.write('con_logfile "console.log"\n')
+        return True
+    except Exception:
+        return False
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1799,6 +1825,10 @@ class App(tk.Tk):
         self.update_presence_button()
         # Non-blocking update check shortly after the window appears.
         self.after(1200, self.start_update_check)
+        try:
+            ensure_console_logging(self.cfg)  # enable server detection with no -condebug
+        except Exception:
+            pass
         self.after(2000, self.server_monitor)
         if self.cfg.get("presence_enabled", True):
             try:
@@ -2932,19 +2962,23 @@ class App(tk.Tk):
             elif condebug_enabled(self.cfg):
                 self.server_var.set("Server: not connected")
             else:
-                self.server_var.set("Server: unknown - enable -condebug (click ?)")
+                self.server_var.set("Server: unknown - restart GMod once to enable detection (?)")
         except Exception:
             pass
         self.after(5000, self.server_monitor)
 
     def condebug_help(self):
+        ok = ensure_console_logging(self.cfg)
+        extra = ("" if ok else
+                 "\n\n(Couldn't write cfg/autoexec.cfg - check the GMod folder above.)")
         messagebox.showinfo(
             "Detecting your server",
-            "So the app can see which server you're on (and reconnect you), GMod must be launched with "
-            "-condebug so it writes console.log.\n\n"
-            "Steam -> right-click Garry's Mod -> Properties -> General -> Launch Options, add:\n\n"
-            "    -condebug\n\n"
-            "Then fully restart GMod. This is required for the same-server features and for auto-reconnect.")
+            "The app has set this up automatically: it added `con_logfile` to your GMod cfg/autoexec.cfg so "
+            "GMod logs its console to console.log. That's a config command, not Lua, so the server can't block "
+            "it - no -condebug needed.\n\n"
+            "Just fully restart GMod once for it to take effect, and the Connection row will show your server.\n\n"
+            "If your setup ignores it, the fallback is to add -condebug to GMod's launch options "
+            "(Steam -> Garry's Mod -> Properties -> Launch Options)." + extra)
 
     def restart_and_apply(self):
         server = getattr(self, "detected_server", "") or detect_current_server(self.cfg)
