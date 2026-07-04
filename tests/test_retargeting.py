@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import json
 import os
 import shutil
@@ -122,6 +123,11 @@ class RetargetingTests(unittest.TestCase):
         target = om.find_target({}, "Angie Yonaga")
 
         self.assertEqual("materials/dro/sprites/characters/dr_v3/angie yonaga", target["sprite_dir"])
+
+    def test_update_button_is_in_upper_settings_row(self):
+        source = inspect.getsource(om.App._build)
+
+        self.assertLess(source.index("Check for Updates"), source.index("conn = ttk.Frame"))
 
     def test_extract_workshop_gma_uses_fresh_folder_when_previous_extract_is_locked(self):
         app_dir = os.path.join(self.tempdir, "app")

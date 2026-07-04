@@ -48,7 +48,7 @@ OLD_COMMUNITY_INDEX_URLS = {
     # Pre-rename URL: auto-migrate existing configs to the new repo path.
     "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs.json",
 }
-APP_VERSION = "1.14"
+APP_VERSION = "1.15"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -1865,6 +1865,10 @@ class App(tk.Tk):
         ttk.Label(settings, text="Settings:", foreground="#444").pack(side="left")
         self.presence_btn_text = tk.StringVar(value="Community Presence: ON")
         ttk.Button(settings, textvariable=self.presence_btn_text, command=self.toggle_presence).pack(side="left", padx=6)
+        self.update_status = tk.StringVar(value="")
+        ttk.Button(settings, text="Check for Updates",
+                   command=lambda: self.start_update_check(manual=True)).pack(side="left", padx=(10, 4))
+        ttk.Label(settings, textvariable=self.update_status, foreground="#1a7f1a").pack(side="left", padx=(0, 8))
         ttk.Label(settings,
                   text="(let other manager users on your server see/share your community packs - click to turn off)",
                   foreground="#777").pack(side="left")
@@ -1882,10 +1886,6 @@ class App(tk.Tk):
         bot4 = ttk.Frame(self, padding=(8, 0, 8, 8))
         bot4.pack(fill="x")
         ttk.Label(bot4, text=f"Version {APP_VERSION}", foreground="#777").pack(side="left")
-        ttk.Button(bot4, text="Check for Updates",
-                   command=lambda: self.start_update_check(manual=True)).pack(side="right")
-        self.update_status = tk.StringVar(value="")
-        ttk.Label(bot4, textvariable=self.update_status, foreground="#1a7f1a").pack(side="right", padx=8)
 
     TUTORIAL = (
         "GMOD OVERRIDE MANAGER — QUICK TUTORIAL\n"
