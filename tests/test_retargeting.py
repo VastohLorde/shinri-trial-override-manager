@@ -656,5 +656,21 @@ class ConflictResolutionTests(unittest.TestCase):
         self.assertEqual(asg[om.pack_addon_prefix(packs[1])], "Y")
 
 
+
+class ServerDetectTests(unittest.TestCase):
+    def test_detect_current_server_from_console_log(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            log = os.path.join(tmp, "console.log")
+            with open(log, "w") as f:
+                f.write("map load\nConnecting to 45.67.89.10:27015...\nConnected to 45.67.89.10:27015\nplay\n")
+            self.assertEqual(om.detect_current_server({"gmod_path": tmp}), "45.67.89.10:27015")
+            with open(log, "a") as f:
+                f.write("Disconnect: Leaving.\n")
+            self.assertEqual(om.detect_current_server({"gmod_path": tmp}), "")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

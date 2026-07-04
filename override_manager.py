@@ -48,7 +48,7 @@ OLD_COMMUNITY_INDEX_URLS = {
     # Pre-rename URL: auto-migrate existing configs to the new repo path.
     "https://raw.githubusercontent.com/VastohLorde/gmod-override-manager/main/community_packs.json",
 }
-APP_VERSION = "1.13"
+APP_VERSION = "1.14"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -1707,6 +1707,82 @@ def write_presence_status(cfg, installed, need_reconnect):
         json.dump({"installed": installed, "need_reconnect": bool(need_reconnect), "ts": int(time.time())}, f)
 
 
+# ----- Out-of-game server detection + GMod (re)launch -----
+# In-game Lua is blocked on the target server, so the app detects the current
+# server by reading GMod's console.log (requires the -condebug launch option).
+GMOD_PROCS = ("gmod.exe", "hl2.exe")
+_SERVER_IP_RE = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{2,5})")
+
+
+def gmod_console_log(cfg):
+    return os.path.join(cfg.get("gmod_path", DEFAULT_GMOD), "console.log")
+
+
+def detect_current_server(cfg, max_bytes=500000):
+    """Best-effort: parse GMod's console.log for the server you're currently on.
+    Returns 'ip:port' or ''. Needs GMod launched with -condebug."""
+    path = gmod_console_log(cfg)
+    try:
+        if not os.path.exists(path):
+            return ""
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - max_bytes))
+            data = f.read().decode("latin1", "replace")
+    except Exception:
+        return ""
+    server = ""
+    for line in data.splitlines():
+        low = line.lower()
+        if "connecting to" in low or "connected to" in low:
+            m = _SERVER_IP_RE.search(line)
+            if m:
+                server = m.group(1)
+        elif "disconnect:" in low or low.strip() in ("disconnect", "dropped from server"):
+            server = ""
+    return server
+
+
+def condebug_enabled(cfg):
+    """Heuristic: console.log exists and was written recently."""
+    path = gmod_console_log(cfg)
+    try:
+        return os.path.exists(path) and (time.time() - os.path.getmtime(path)) < 24 * 3600
+    except Exception:
+        return False
+
+
+def gmod_running():
+    try:
+        out = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=15).stdout.lower()
+        return any(p in out for p in GMOD_PROCS)
+    except Exception:
+        return False
+
+
+def kill_gmod():
+    for p in GMOD_PROCS:
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", p], capture_output=True, timeout=15)
+        except Exception:
+            pass
+
+
+def launch_gmod(server=""):
+    """Launch GMod via Steam, optionally connecting straight to a server."""
+    url = "steam://connect/" + server if server else "steam://rungameid/4000"
+    try:
+        os.startfile(url)  # Windows
+        return True
+    except Exception:
+        try:
+            subprocess.Popen(["cmd", "/c", "start", "", url], close_fds=True)
+            return True
+        except Exception:
+            return False
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1717,11 +1793,13 @@ class App(tk.Tk):
         self.minsize(640, 360)
         self.community_index = None
         self._presence_running = False
+        self.detected_server = ""
         self._build()
         self.refresh()
         self.update_presence_button()
         # Non-blocking update check shortly after the window appears.
         self.after(1200, self.start_update_check)
+        self.after(2000, self.server_monitor)
         if self.cfg.get("presence_enabled", True):
             try:
                 install_presence_addon(self.cfg)
@@ -1790,6 +1868,13 @@ class App(tk.Tk):
         ttk.Label(settings,
                   text="(let other manager users on your server see/share your community packs - click to turn off)",
                   foreground="#777").pack(side="left")
+
+        conn = ttk.Frame(self, padding=(8, 0, 8, 4))
+        conn.pack(fill="x")
+        self.server_var = tk.StringVar(value="Server: (unknown)")
+        ttk.Label(conn, textvariable=self.server_var, foreground="#1a5fb4").pack(side="left")
+        ttk.Button(conn, text="Restart GMod & apply overrides", command=self.restart_and_apply).pack(side="left", padx=8)
+        ttk.Button(conn, text="?", width=2, command=self.condebug_help).pack(side="left")
 
         self.note = tk.StringVar(value="")
         ttk.Label(self, textvariable=self.note, padding=(8, 0, 8, 8), foreground="#a05").pack(fill="x")
@@ -2836,6 +2921,52 @@ class App(tk.Tk):
             except Exception:
                 pass
             messagebox.showinfo("Community Presence", "Community Presence is OFF (in-game addon removed).")
+
+    # ----- Server detection + apply-by-restart -----
+    def server_monitor(self):
+        try:
+            srv = detect_current_server(self.cfg)
+            self.detected_server = srv
+            if srv:
+                self.server_var.set("Server: " + srv)
+            elif condebug_enabled(self.cfg):
+                self.server_var.set("Server: not connected")
+            else:
+                self.server_var.set("Server: unknown - enable -condebug (click ?)")
+        except Exception:
+            pass
+        self.after(5000, self.server_monitor)
+
+    def condebug_help(self):
+        messagebox.showinfo(
+            "Detecting your server",
+            "So the app can see which server you're on (and reconnect you), GMod must be launched with "
+            "-condebug so it writes console.log.\n\n"
+            "Steam -> right-click Garry's Mod -> Properties -> General -> Launch Options, add:\n\n"
+            "    -condebug\n\n"
+            "Then fully restart GMod. This is required for the same-server features and for auto-reconnect.")
+
+    def restart_and_apply(self):
+        server = getattr(self, "detected_server", "") or detect_current_server(self.cfg)
+        msg = ("GMod loads overrides only when it starts, so a normal reconnect (retry) can't apply a "
+               "newly enabled override - GMod has to be relaunched.\n\n"
+               "This will CLOSE GMod and reopen it")
+        if server:
+            msg += f", reconnecting to {server}"
+        msg += ". Continue?"
+        if not messagebox.askyesno("Restart GMod & apply", msg):
+            return
+        if not gmod_running():
+            launch_gmod(server)
+            messagebox.showinfo("Launching GMod",
+                                "Launching GMod" + (f" and connecting to {server}" if server else "") + ".")
+            return
+        kill_gmod()
+        self.after(3500, lambda: launch_gmod(server))
+        messagebox.showinfo(
+            "Restarting GMod",
+            "Closing GMod... it will reopen" + (f" and reconnect to {server}" if server else "") +
+            " in a few seconds, with your enabled overrides loaded.")
 
     # ----- Update checking / self-update -----
     def start_update_check(self, manual=False):
