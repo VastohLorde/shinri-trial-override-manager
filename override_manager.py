@@ -244,13 +244,9 @@ def patch_mdl_bodygroup_names(path, index_to_name):
         if not old_name:
             continue
         raw = str(new_name or "").encode("utf-8")
-        old_raw = old_name.encode("utf-8")
-        if len(raw) <= len(old_raw):
-            data[name_offset:name_offset + len(old_raw)] = raw + (b"\0" * (len(old_raw) - len(raw)))
-        else:
-            append_offset = len(data)
-            data.extend(raw + b"\0")
-            struct.pack_into("<i", data, offset, append_offset - offset)
+        append_offset = len(data)
+        data.extend(raw + b"\0")
+        struct.pack_into("<i", data, offset, append_offset - offset)
         changed = True
     if changed:
         struct.pack_into("<i", data, 76, len(data))
@@ -994,7 +990,7 @@ def pack_folder_name(name):
     return cleaned or "Community Pack"
 
 
-MODEL_SIDECAR_EXTS = (".mdl", ".vvd", ".phy", ".dx90.vtx", ".sw.vtx", ".ani")
+MODEL_SIDECAR_EXTS = (".mdl", ".vvd", ".phy", ".dx90.vtx", ".dx80.vtx", ".sw.vtx", ".ani")
 SPRITE_GROUPS = [
     {"name": "Talk", "initial": 3, "prefix": "ct_sprite", "first": None},
     {"name": "Talk Icon", "initial": 3, "prefix": "ct_spriteico", "first": None},
@@ -1452,9 +1448,19 @@ def extract_workshop_gma(gmod_path, gma_path, item_id):
     gmad = find_gmad(gmod_path)
     if not gmad:
         raise FileNotFoundError("Could not find GMod's gmad.exe. Check the configured GMod folder.")
-    out_dir = os.path.join(APP_DIR, "workshop_extracts", str(item_id))
+    extracts_root = os.path.join(APP_DIR, "workshop_extracts")
+    os.makedirs(extracts_root, exist_ok=True)
+    out_dir = os.path.join(extracts_root, str(item_id))
     if os.path.isdir(out_dir):
-        shutil.rmtree(out_dir)
+        try:
+            shutil.rmtree(out_dir)
+        except PermissionError:
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            out_dir = os.path.join(extracts_root, f"{item_id}_{stamp}")
+            suffix = 1
+            while os.path.exists(out_dir):
+                suffix += 1
+                out_dir = os.path.join(extracts_root, f"{item_id}_{stamp}_{suffix}")
     os.makedirs(out_dir, exist_ok=True)
     cmd = [gmad, "extract", "-file", gma_path, "-out", out_dir]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)

@@ -2,6 +2,7 @@ import importlib
 import json
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import types
@@ -121,6 +122,77 @@ class RetargetingTests(unittest.TestCase):
         target = om.find_target({}, "Angie Yonaga")
 
         self.assertEqual("materials/dro/sprites/characters/dr_v3/angie yonaga", target["sprite_dir"])
+
+    def test_extract_workshop_gma_uses_fresh_folder_when_previous_extract_is_locked(self):
+        app_dir = os.path.join(self.tempdir, "app")
+        gmod_dir = os.path.join(self.tempdir, "GarrysMod", "garrysmod")
+        os.makedirs(os.path.join(self.tempdir, "GarrysMod", "bin"), exist_ok=True)
+        os.makedirs(gmod_dir, exist_ok=True)
+        self.write_file("GarrysMod/bin/gmad.exe")
+        old_extract = os.path.join(app_dir, "workshop_extracts", "12345")
+        os.makedirs(os.path.join(old_extract, "lua", "autorun"), exist_ok=True)
+
+        old_app_dir = om.APP_DIR
+        old_run = om.subprocess.run
+        old_rmtree = om.shutil.rmtree
+        try:
+            om.APP_DIR = app_dir
+
+            def locked_rmtree(path, *args, **kwargs):
+                if os.path.abspath(path) == os.path.abspath(old_extract):
+                    raise PermissionError(5, "Access is denied", os.path.join(path, "lua", "autorun"))
+                return old_rmtree(path, *args, **kwargs)
+
+            calls = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(cmd)
+                return types.SimpleNamespace(returncode=0, stderr="", stdout="")
+
+            om.shutil.rmtree = locked_rmtree
+            om.subprocess.run = fake_run
+
+            out_dir = om.extract_workshop_gma(gmod_dir, os.path.join(self.tempdir, "item.gma"), "12345")
+
+            self.assertNotEqual(os.path.abspath(old_extract), os.path.abspath(out_dir))
+            self.assertTrue(os.path.basename(out_dir).startswith("12345_"))
+            self.assertEqual(out_dir, calls[0][-1])
+        finally:
+            om.APP_DIR = old_app_dir
+            om.subprocess.run = old_run
+            om.shutil.rmtree = old_rmtree
+
+    def test_patch_mdl_bodygroup_names_appends_without_overwriting_existing_string(self):
+        mdl_path = self.write_file("model.mdl", b"\0" * 320)
+        with open(mdl_path, "rb") as f:
+            data = bytearray(f.read())
+        bodypartindex = 256
+        name_offset = 272
+        struct.pack_into("<i", data, 76, len(data))
+        struct.pack_into("<ii", data, 232, 1, bodypartindex)
+        struct.pack_into("<iiii", data, bodypartindex, name_offset - bodypartindex, 1, 1, 0)
+        data[name_offset:name_offset + len(b"Clothes\0")] = b"Clothes\0"
+        with open(mdl_path, "wb") as f:
+            f.write(data)
+
+        self.assertTrue(om.patch_mdl_bodygroup_names(mdl_path, {0: "shirt"}))
+
+        with open(mdl_path, "rb") as f:
+            patched = f.read()
+        new_name_index = struct.unpack_from("<i", patched, bodypartindex)[0]
+        self.assertEqual(b"Clothes", patched[name_offset:name_offset + len(b"Clothes")])
+        self.assertEqual("shirt", om.read_c_string(patched, bodypartindex + new_name_index))
+
+    def test_copy_model_sidecars_includes_dx80_vtx(self):
+        model = self.write_file("src/model.mdl")
+        self.write_file("src/model.dx80.vtx", b"dx80")
+
+        copied = om.copy_model_sidecars(model, "models/dro/player/test/test", self.tempdir)
+
+        expected = os.path.join(self.tempdir, "models", "dro", "player", "test", "test.dx80.vtx")
+        self.assertIn(expected, copied)
+        with open(expected, "rb") as f:
+            self.assertEqual(b"dx80", f.read())
 
     def test_target_change_needs_auto_apply_when_pack_already_enabled(self):
         addons = os.path.join(self.tempdir, "addons")
