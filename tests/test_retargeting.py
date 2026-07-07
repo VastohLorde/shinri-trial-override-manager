@@ -402,6 +402,69 @@ class RetargetingTests(unittest.TestCase):
         declared_length = int.from_bytes(data[76:80], "little", signed=True)
         self.assertEqual(len(data), declared_length)
 
+    def test_patch_mdl_relocate_bodygroup_moves_real_submodels_to_new_slot(self):
+        source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Shiroko Terror Kirumi"
+        source_model = os.path.join(source_pack, "models/dro/player/characters3/char13/char13.mdl")
+        if not os.path.exists(source_model):
+            self.skipTest("real Shiroko Terror Kirumi model not available")
+        mdl_path = os.path.join(self.tempdir, "char13.mdl")
+        shutil.copy2(source_model, mdl_path)
+        before = {g["index"]: g for g in om.parse_mdl_bodygroups(mdl_path)}
+        self.assertEqual(3, before[3]["count"])  # "outfit", the group we're relocating
+
+        changed = om.patch_mdl_relocate_bodygroup(mdl_path, 3, native_base=1, native_count=2, new_name="neck")
+
+        self.assertTrue(changed)
+        groups = {g["index"]: g for g in om.parse_mdl_bodygroups(mdl_path)}
+        # old slot neutralized (no longer shows a slider) but not deleted
+        self.assertEqual(1, groups[3]["count"])
+        # new slot appended at the end, matching the native base/count, real submodels
+        new_index = max(groups)
+        self.assertEqual("neck", groups[new_index]["name"])
+        self.assertEqual(2, groups[new_index]["count"])
+        self.assertEqual(1, groups[new_index]["base"])
+        # every other original group is untouched
+        self.assertEqual(before[0], groups[0])
+        self.assertEqual(before[1], groups[1])
+        self.assertEqual(before[2], groups[2])
+        with open(mdl_path, "rb") as f:
+            data = f.read()
+        declared_length = int.from_bytes(data[76:80], "little", signed=True)
+        self.assertEqual(len(data), declared_length)
+
+    def test_enable_default_relocates_dead_slot_to_reachable_native_index(self):
+        app_dir = r"C:\Users\user\Desktop\GMod_Override_Manager"
+        source_pack = os.path.join(app_dir, "overrides", "Shiroko Terror Kirumi")
+        source_model = os.path.join(source_pack, "models/dro/player/characters3/char13/char13.mdl")
+        target_model = os.path.join(app_dir, "debug_extracts/dro_playermodels_2562456244/models/dro/player/characters3/char13/char13.mdl")
+        if not os.path.exists(source_model) or not os.path.exists(target_model):
+            self.skipTest("real Shiroko Terror/Kirumi models not available")
+        old_app_dir = om.APP_DIR
+        try:
+            om.APP_DIR = app_dir
+            cfg = {"gmod_path": self.tempdir}
+            pack = {"name": "Shiroko Terror Kirumi", "slug": "ovr_shiroko_terror_kirumi", "folder": source_pack}
+
+            om.enable(cfg, pack, None)
+
+            mdl_path = os.path.join(
+                self.tempdir,
+                "addons",
+                "ovr_shiroko_terror_kirumi",
+                "models/dro/player/characters3/char13/char13.mdl",
+            )
+            groups = {g["index"]: g for g in om.parse_mdl_bodygroups(mdl_path)}
+            # the outfit group's original index (3, "skirt" server-side, count 1) must no
+            # longer expose a (dead) slider
+            self.assertEqual(1, groups[3]["count"])
+            # a genuinely reachable slider must exist somewhere with the outfit meshes,
+            # capped to the honest 2-of-3 the server-native model actually allows
+            relocated = [g for g in groups.values() if g["index"] > 3]
+            self.assertTrue(relocated)
+            self.assertEqual(2, relocated[0]["count"])
+        finally:
+            om.APP_DIR = old_app_dir
+
     def test_enable_retarget_renames_override_bodygroups_to_target_slider_names(self):
         source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Hoshino Himiko"
         target_model = r"C:\Users\user\Desktop\Female_Shuichi_Addon_Extracts\2562456244_PlayerModels_ST\models\dro\player\characters1\char9\char9.mdl"

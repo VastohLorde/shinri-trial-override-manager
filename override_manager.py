@@ -903,11 +903,91 @@ def patch_retargeted_model_bodygroup_names(dest_folder, pack, target, source):
     return changed_names
 
 
+def patch_mdl_relocate_bodygroup(path, source_index, native_base, native_count, new_name):
+    """Move a bodygroup's real submodels onto a NEW slot at the end of the table, so it
+    lines up with the index/base the server-native model actually networks a multi-option
+    slot at. The old slot is neutralized (count clamped to 1, nothing else touched) so it
+    stops showing a dead slider instead of being deleted outright.
+
+    This only ever GROWS the table (appends one record); it never rewrites or removes
+    existing model/name data, so every other bodygroup keeps working exactly as before.
+    """
+    with open(path, "rb") as f:
+        data = bytearray(f.read())
+    if len(data) < 240:
+        return False
+    try:
+        numbodyparts, bodypartindex = struct.unpack_from("<ii", data, 232)
+    except struct.error:
+        return False
+    if numbodyparts <= 0 or bodypartindex <= 0 or not (0 <= source_index < numbodyparts):
+        return False
+
+    old_records = []
+    for index in range(numbodyparts):
+        offset = bodypartindex + index * 16
+        if offset + 16 > len(data):
+            return False
+        sznameindex, nummodels, base, modelindex = struct.unpack_from("<iiii", data, offset)
+        old_records.append({
+            "name_abs": offset + sznameindex,
+            "nummodels": nummodels,
+            "base": base,
+            "model_abs": offset + modelindex,
+        })
+
+    source = old_records[source_index]
+    new_numbodyparts = numbodyparts + 1
+    new_table = len(data)
+    data.extend(b"\0" * (new_numbodyparts * 16))
+
+    def append_name(name):
+        out = len(data)
+        data.extend(str(name or "").encode("utf-8") + b"\0")
+        return out
+
+    for index in range(numbodyparts):
+        dest = new_table + index * 16
+        record = old_records[index]
+        nummodels = 1 if index == source_index else record["nummodels"]
+        struct.pack_into(
+            "<iiii", data, dest,
+            record["name_abs"] - dest,
+            nummodels,
+            record["base"],
+            record["model_abs"] - dest,
+        )
+
+    dest = new_table + numbodyparts * 16
+    name_abs = append_name(new_name)
+    count = max(1, min(int(source["nummodels"]), int(native_count)))
+    struct.pack_into(
+        "<iiii", data, dest,
+        name_abs - dest,
+        count,
+        max(1, int(native_base)),
+        source["model_abs"] - dest,
+    )
+
+    struct.pack_into("<ii", data, 232, new_numbodyparts, new_table)
+    struct.pack_into("<i", data, 76, len(data))
+    with open(path, "wb") as f:
+        f.write(data)
+    return True
+
+
 def patch_default_model_bodygroup_names(dest_folder, pack, source):
     # Same idea as patch_retargeted_model_bodygroup_names, for a Default (no retarget)
     # install: label the pack's own sliders with the names the live server-native model
-    # actually uses at that slot, WITHOUT touching submodel counts (see the comment on
+    # actually uses at that slot, WITHOUT collapsing submodel counts (see the comment on
     # patch_retargeted_model_bodygroup_names for why collapsing counts is destructive).
+    #
+    # If the override's OWN index for a configurable group has no working server-native
+    # counterpart (the native model's SAME index is single-option or doesn't exist there),
+    # a plain rename can't help -- the server will silently discard whatever value that
+    # slider sends. In that case, relocate the group's real submodels onto a new slot that
+    # lines up with wherever the native model's matching multi-option group actually lives,
+    # so the slider is genuinely reachable instead of cosmetically renamed but dead.
     copied_mdl = mdl_path_from_base(dest_folder, source.get("model_base", ""))
     target = dict(source)
     target["name"] = DEFAULT_TARGET_NAME
@@ -918,13 +998,41 @@ def patch_default_model_bodygroup_names(dest_folder, pack, source):
     override_groups = parse_mdl_bodygroups(source_mdl)
     target_groups = parse_mdl_bodygroups(target_reference_mdl)
     compat = bodygroup_compat_map(target_groups, override_groups)
+    target_by_index = {int(g["index"]): g for g in target_groups}
+
     renames = {}
+    best_match = {}
     for _target_index, item in compat.items():
-        target_name = item.get("target_name") or ""
+        if int(item.get("target_count") or 1) <= 1:
+            continue
         override_index = item.get("override_index")
-        if target_name and override_index is not None:
-            renames[int(override_index)] = target_name
-    return patch_mdl_bodygroup_names(copied_mdl, renames)
+        if override_index is None:
+            continue
+        override_index = int(override_index)
+        renames.setdefault(override_index, item.get("target_name") or "")
+        best_match.setdefault(override_index, item)
+
+    changed = False
+    for group in override_groups:
+        override_index = int(group["index"])
+        if int(group.get("count") or 1) <= 1:
+            continue
+        native_here = target_by_index.get(override_index)
+        if native_here and int(native_here.get("count") or 1) > 1:
+            continue  # already reachable at this exact slot; a rename is enough
+        match = best_match.get(override_index)
+        if not match:
+            continue
+        if patch_mdl_relocate_bodygroup(
+            copied_mdl, override_index,
+            match["target_base"], match["target_count"],
+            match.get("target_name") or group.get("name"),
+        ):
+            changed = True
+            renames.pop(override_index, None)
+
+    changed_names = patch_mdl_bodygroup_names(copied_mdl, renames)
+    return changed or changed_names
 
 
 def read_source_target_from_json(folder):
