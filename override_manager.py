@@ -903,6 +903,30 @@ def patch_retargeted_model_bodygroup_names(dest_folder, pack, target, source):
     return changed_names
 
 
+def patch_default_model_bodygroup_names(dest_folder, pack, source):
+    # Same idea as patch_retargeted_model_bodygroup_names, for a Default (no retarget)
+    # install: label the pack's own sliders with the names the live server-native model
+    # actually uses at that slot, WITHOUT touching submodel counts (see the comment on
+    # patch_retargeted_model_bodygroup_names for why collapsing counts is destructive).
+    copied_mdl = mdl_path_from_base(dest_folder, source.get("model_base", ""))
+    target = dict(source)
+    target["name"] = DEFAULT_TARGET_NAME
+    target_reference_mdl = find_known_target_mdl(target)
+    source_mdl = mdl_path_from_base(pack["folder"], source.get("model_base", ""))
+    if not (os.path.exists(copied_mdl) and os.path.exists(target_reference_mdl) and os.path.exists(source_mdl)):
+        return False
+    override_groups = parse_mdl_bodygroups(source_mdl)
+    target_groups = parse_mdl_bodygroups(target_reference_mdl)
+    compat = bodygroup_compat_map(target_groups, override_groups)
+    renames = {}
+    for _target_index, item in compat.items():
+        target_name = item.get("target_name") or ""
+        override_index = item.get("override_index")
+        if target_name and override_index is not None:
+            renames[int(override_index)] = target_name
+    return patch_mdl_bodygroup_names(copied_mdl, renames)
+
+
 def read_source_target_from_json(folder):
     path = os.path.join(folder, "override.json")
     if not os.path.exists(path):
@@ -1224,6 +1248,7 @@ def enable(cfg, pack, target=None):
             copy_pack_tree(pack["folder"], dest)
             source = infer_source_target(pack["folder"])
             if source.get("model_base"):
+                patch_default_model_bodygroup_names(dest, pack, source)
                 compat_target = dict(source)
                 compat_target["name"] = DEFAULT_TARGET_NAME
                 write_bodygroup_compat_lua(dest, pack, compat_target, source)
