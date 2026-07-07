@@ -402,6 +402,204 @@ class RetargetingTests(unittest.TestCase):
         declared_length = int.from_bytes(data[76:80], "little", signed=True)
         self.assertEqual(len(data), declared_length)
 
+    def test_patch_mdl_relocate_bodygroup_moves_real_submodels_to_new_slot(self):
+        source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Shiroko Terror Kirumi"
+        source_model = os.path.join(source_pack, "models/dro/player/characters3/char13/char13.mdl")
+        if not os.path.exists(source_model):
+            self.skipTest("real Shiroko Terror Kirumi model not available")
+        mdl_path = os.path.join(self.tempdir, "char13.mdl")
+        shutil.copy2(source_model, mdl_path)
+        before = {g["index"]: g for g in om.parse_mdl_bodygroups(mdl_path)}
+        self.assertEqual(3, before[3]["count"])  # "outfit", the group we're relocating
+
+        with open(mdl_path, "rb") as f:
+            before_data = f.read()
+        before_numbodyparts, before_bodypartindex = struct.unpack_from("<ii", before_data, 232)
+        before_offset = before_bodypartindex + 3 * 16
+        _n, _c, _b, before_modelindex = struct.unpack_from("<iiii", before_data, before_offset)
+        original_outfit_model_abs = before_offset + before_modelindex
+        original_outfit_bytes = before_data[original_outfit_model_abs:original_outfit_model_abs + 148 * 3]
+
+        changed = om.patch_mdl_relocate_bodygroup(mdl_path, 3, native_base=1, native_count=2, new_name="neck")
+
+        self.assertTrue(changed)
+        groups = {g["index"]: g for g in om.parse_mdl_bodygroups(mdl_path)}
+        # old slot neutralized (no longer shows a slider) but not deleted
+        self.assertEqual(1, groups[3]["count"])
+        # new slot appended at the end, matching the native base/count, real submodels
+        new_index = max(groups)
+        self.assertEqual("neck", groups[new_index]["name"])
+        self.assertEqual(2, groups[new_index]["count"])
+        self.assertEqual(1, groups[new_index]["base"])
+        # every other original group is untouched
+        self.assertEqual(before[0], groups[0])
+        self.assertEqual(before[1], groups[1])
+        self.assertEqual(before[2], groups[2])
+        with open(mdl_path, "rb") as f:
+            data = f.read()
+        declared_length = int.from_bytes(data[76:80], "little", signed=True)
+        self.assertEqual(len(data), declared_length)
+
+        # the old slot must point at a genuinely EMPTY submodel (not the real outfit
+        # data) so it stops permanently drawing outfit1 on top of whatever the new,
+        # reachable slot picks -- two bodyparts must never share one real mesh subtree.
+        numbodyparts, bodypartindex = struct.unpack_from("<ii", data, 232)
+        old_offset = bodypartindex + 3 * 16
+        _sznameindex, _nummodels, _base, modelindex = struct.unpack_from("<iiii", data, old_offset)
+        old_model_abs = old_offset + modelindex
+        new_offset = bodypartindex + new_index * 16
+        _sznameindex2, _nummodels2, _base2, modelindex2 = struct.unpack_from("<iiii", data, new_offset)
+        new_model_abs = new_offset + modelindex2
+        self.assertNotEqual(old_model_abs, new_model_abs)
+        self.assertEqual(b"\x00" * 148, bytes(data[old_model_abs:old_model_abs + 148]))
+        # the new slot's model data is the ORIGINAL real outfit array, at its original
+        # location, untouched and not duplicated
+        self.assertEqual(new_model_abs, original_outfit_model_abs)
+        self.assertEqual(bytes(data[new_model_abs:new_model_abs + 148 * 3]), original_outfit_bytes)
+
+    def test_patch_vtx_relocate_bodygroup_stays_structurally_consistent(self):
+        source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Shiroko Terror Kirumi"
+        source_vtx = os.path.join(source_pack, "models/dro/player/characters3/char13/char13.dx90.vtx")
+        if not os.path.exists(source_vtx):
+            self.skipTest("real Shiroko Terror Kirumi vtx not available")
+        vtx_path = os.path.join(self.tempdir, "char13.dx90.vtx")
+        shutil.copy2(source_vtx, vtx_path)
+
+        with open(vtx_path, "rb") as f:
+            before_bytes = bytes(f.read())
+        before_count = struct.unpack_from("<i", before_bytes, 28)[0]
+
+        changed = om.patch_vtx_relocate_bodygroup(vtx_path, 3)
+
+        self.assertTrue(changed)
+        with open(vtx_path, "rb") as f:
+            data = f.read()
+        # everything up to the header's own bodypart-count/offset fields is untouched,
+        # and the file only grew (append-only, nothing before it shifted or was rewritten)
+        self.assertEqual(before_bytes[:28], data[:28])
+        self.assertEqual(before_bytes[36:len(before_bytes)], data[36:len(before_bytes)])
+        self.assertGreater(len(data), len(before_bytes))
+        numBodyParts, bodyPartOffset = struct.unpack_from("<ii", data, 28)
+        self.assertEqual(before_count + 1, numBodyParts)
+        # walk the full hierarchy for every bodypart to prove no out-of-range offsets
+        models_abs = []
+        for bp in range(numBodyParts):
+            bp_off = bodyPartOffset + bp * 8
+            numModels, modelOffset_rel = struct.unpack_from("<ii", data, bp_off)
+            model_abs = bp_off + modelOffset_rel
+            models_abs.append((numModels, model_abs))
+            for m in range(numModels):
+                m_off = model_abs + m * 8
+                self.assertLessEqual(m_off + 8, len(data))
+                numLods, lodOffset_rel = struct.unpack_from("<ii", data, m_off)
+                lod_abs = m_off + lodOffset_rel
+                for l in range(numLods):
+                    l_off = lod_abs + l * 12
+                    self.assertLessEqual(l_off + 12, len(data))
+        # bodypart 3 itself now points at a genuinely empty model (0 meshes at LOD0),
+        # while the new (last) slot gets the real 3-submodel outfit data instead.
+        old_num_models, old_model_abs = models_abs[3]
+        self.assertEqual(1, old_num_models)
+        numLods, lodOffset_rel = struct.unpack_from("<ii", data, old_model_abs)
+        lod_abs = old_model_abs + lodOffset_rel
+        numMeshes, _meshOffset_rel, _switchPoint = struct.unpack_from("<iif", data, lod_abs)
+        self.assertEqual(0, numMeshes)
+        # and the new slot's model data is NOT the same location as the old (empty) one
+        new_num_models, new_model_abs = models_abs[-1]
+        self.assertEqual(3, new_num_models)
+        self.assertNotEqual(old_model_abs, new_model_abs)
+
+    def test_enable_default_relocates_dead_slot_to_reachable_native_index(self):
+        app_dir = r"C:\Users\user\Desktop\GMod_Override_Manager"
+        source_pack = os.path.join(app_dir, "overrides", "Shiroko Terror Kirumi")
+        source_model = os.path.join(source_pack, "models/dro/player/characters3/char13/char13.mdl")
+        target_model = os.path.join(app_dir, "debug_extracts/dro_playermodels_2562456244/models/dro/player/characters3/char13/char13.mdl")
+        if not os.path.exists(source_model) or not os.path.exists(target_model):
+            self.skipTest("real Shiroko Terror/Kirumi models not available")
+        old_app_dir = om.APP_DIR
+        try:
+            om.APP_DIR = app_dir
+            cfg = {"gmod_path": self.tempdir}
+            pack = {"name": "Shiroko Terror Kirumi", "slug": "ovr_shiroko_terror_kirumi", "folder": source_pack}
+
+            om.enable(cfg, pack, None)
+
+            mdl_path = os.path.join(
+                self.tempdir,
+                "addons",
+                "ovr_shiroko_terror_kirumi",
+                "models/dro/player/characters3/char13/char13.mdl",
+            )
+            vtx_path = mdl_path[:-4] + ".dx90.vtx"
+            groups = {g["index"]: g for g in om.parse_mdl_bodygroups(mdl_path)}
+            # the outfit group's original index (3, "skirt" server-side, count 1) must no
+            # longer expose a (dead) slider
+            self.assertEqual(1, groups[3]["count"])
+            # a genuinely reachable slider must exist somewhere with the outfit meshes,
+            # capped to the honest 2-of-3 the server-native model actually allows
+            relocated = [g for g in groups.values() if g["index"] > 3]
+            self.assertTrue(relocated)
+            self.assertEqual(2, relocated[0]["count"])
+
+            # the paired .vtx must have grown in lockstep, or the client crashes on load
+            with open(vtx_path, "rb") as f:
+                vtx_data = f.read()
+            vtx_numbodyparts = struct.unpack_from("<i", vtx_data, 28)[0]
+            mdl_numbodyparts = struct.unpack_from("<i", open(mdl_path, "rb").read(240), 232)[0]
+            self.assertEqual(mdl_numbodyparts, vtx_numbodyparts)
+
+            # the old (dead) slot's vtx model must be genuinely empty (0 meshes), so it
+            # doesn't permanently draw outfit1 on top of whatever the new slot picks
+            vtx_bodyPartOffset = struct.unpack_from("<i", vtx_data, 32)[0]
+            bp3_off = vtx_bodyPartOffset + 3 * 8
+            _numModels, modelOffset_rel = struct.unpack_from("<ii", vtx_data, bp3_off)
+            model_abs = bp3_off + modelOffset_rel
+            numLods, lodOffset_rel = struct.unpack_from("<ii", vtx_data, model_abs)
+            lod_abs = model_abs + lodOffset_rel
+            numMeshes = struct.unpack_from("<i", vtx_data, lod_abs)[0]
+            self.assertEqual(0, numMeshes)
+        finally:
+            om.APP_DIR = old_app_dir
+
+    def test_enable_retarget_also_relocates_dead_slot_bodygroups(self):
+        # The relocate-on-dead-slot fix must apply on the RETARGET path too, not just
+        # Default installs -- retargeted packs can hit the exact same "workshop update
+        # reordered the native bodygroup table" problem. Retargeting Shiroko Terror onto
+        # its own native character (Kirumi Tojo) exercises the identical dead "skirt" slot
+        # as the Default-install test, just through patch_retargeted_model_bodygroup_names
+        # instead of patch_default_model_bodygroup_names -- proving both paths share the
+        # same relocate_unreachable_bodygroups logic.
+        app_dir = r"C:\Users\user\Desktop\GMod_Override_Manager"
+        source_pack = os.path.join(app_dir, "overrides", "Shiroko Terror Kirumi")
+        source_model = os.path.join(source_pack, "models/dro/player/characters3/char13/char13.mdl")
+        target_model = os.path.join(app_dir, "debug_extracts/dro_playermodels_2562456244/models/dro/player/characters3/char13/char13.mdl")
+        if not os.path.exists(source_model) or not os.path.exists(target_model):
+            self.skipTest("real Shiroko Terror/Kirumi models not available")
+        old_app_dir = om.APP_DIR
+        try:
+            om.APP_DIR = app_dir
+            cfg = {"gmod_path": self.tempdir}
+            pack = {"name": "Shiroko Terror Kirumi", "slug": "ovr_shiroko_terror_kirumi", "folder": source_pack}
+            target = om.find_target({}, "Kirumi Tojo")
+
+            om.enable(cfg, pack, target)
+
+            mdl_path = os.path.join(
+                self.tempdir, "addons", om.addon_slug(pack, target),
+                "models/dro/player/characters3/char13/char13.mdl",
+            )
+            vtx_path = mdl_path[:-4] + ".dx90.vtx"
+            groups = {g["index"]: g for g in om.parse_mdl_bodygroups(mdl_path)}
+            self.assertEqual(1, groups[3]["count"])
+            relocated = [g for g in groups.values() if g["index"] > 3]
+            self.assertTrue(relocated)
+            self.assertEqual(2, relocated[0]["count"])
+            mdl_numbodyparts = struct.unpack_from("<i", open(mdl_path, "rb").read(240), 232)[0]
+            vtx_numbodyparts = struct.unpack_from("<i", open(vtx_path, "rb").read(36), 28)[0]
+            self.assertEqual(mdl_numbodyparts, vtx_numbodyparts)
+        finally:
+            om.APP_DIR = old_app_dir
+
     def test_enable_retarget_renames_override_bodygroups_to_target_slider_names(self):
         source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Hoshino Himiko"
         target_model = r"C:\Users\user\Desktop\Female_Shuichi_Addon_Extracts\2562456244_PlayerModels_ST\models\dro\player\characters1\char9\char9.mdl"
