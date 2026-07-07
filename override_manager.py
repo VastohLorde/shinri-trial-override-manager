@@ -53,7 +53,7 @@ OLD_COMMUNITY_INDEX_URLS = {
 # Cloud presence backend (Cloudflare Worker - see presence_worker.js). Baked in so
 # all app users share it with zero config. Empty string = cloud presence disabled.
 DEFAULT_PRESENCE_URL = ""
-APP_VERSION = "1.21"
+APP_VERSION = "1.22"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -137,26 +137,27 @@ def configurable_groups(groups):
 
 
 def bodygroup_compat_map(target_groups, override_groups):
+    """Match each configurable TARGET (native) bodygroup to at most one configurable
+    OVERRIDE bodygroup, one-to-one -- no override group is ever handed to two
+    different targets. Name matches are resolved in one pass BEFORE any fallback
+    assignment runs, so a real name match (e.g. override "Shoes" <-> native "shoes")
+    can never be pre-empted by an earlier target greedily fallback-claiming the same
+    override group (that was a real bug: with a single interleaved pass, a target
+    with no name match could claim an override group via fallback, and a LATER
+    target with a genuine name match to that same override group would get mapped
+    to it too -- both then "own" it, and only one can actually work, corrupting
+    which native bit position the client ends up reading/writing)."""
     override_config = configurable_groups(override_groups)
     by_key = {}
     for group in override_config:
         by_key.setdefault(bodygroup_key(group.get("name")), group)
-    fallback = [g for g in override_config if bodygroup_key(g.get("name")) not in ("reference",)]
+
+    targets = configurable_groups(target_groups)
     used = set()
     mapping = {}
-    fallback_pos = 0
-    for target in configurable_groups(target_groups):
-        key = bodygroup_key(target.get("name"))
-        override = by_key.get(key)
-        if not override:
-            while fallback and fallback[fallback_pos % len(fallback)]["index"] in used:
-                fallback_pos += 1
-                if fallback_pos > len(fallback) * 2:
-                    break
-            override = fallback[fallback_pos % len(fallback)] if fallback else None
-            fallback_pos += 1
-        if not override:
-            continue
+    unmatched_targets = []
+
+    def add(target, override):
         used.add(override["index"])
         mapping[target["index"]] = {
             "target_name": target.get("name") or "",
@@ -166,6 +167,22 @@ def bodygroup_compat_map(target_groups, override_groups):
             "override_name": override.get("name") or "",
             "override_count": int(override.get("count") or 1),
         }
+
+    for target in targets:
+        override = by_key.get(bodygroup_key(target.get("name")))
+        if override and override["index"] not in used:
+            add(target, override)
+        else:
+            unmatched_targets.append(target)
+
+    fallback = [g for g in override_config if g["index"] not in used]
+    fallback_pos = 0
+    for target in unmatched_targets:
+        if fallback_pos >= len(fallback):
+            break
+        add(target, fallback[fallback_pos])
+        fallback_pos += 1
+
     return mapping
 
 
@@ -876,67 +893,238 @@ def patch_retargeted_model_bodygroups(dest_folder, pack, target, source):
     return patch_mdl_bodygroup_order(copied_mdl, target_groups, override_groups)
 
 
-def relocate_unreachable_bodygroups(copied_mdl, override_groups, target_groups):
-    """Shared by both the Default and retargeted install paths: rename every override
-    bodygroup to the server-native name at its matched slot (cosmetic), and for any
-    configurable override group whose OWN index has no working native counterpart
-    (single-option or missing there -- e.g. a workshop update reordered the native
-    bodygroup table), relocate its real submodels onto a new slot that lines up with
-    wherever the native model's matching multi-option group actually lives now. A
-    plain rename can't fix that case: the server has zero bits allocated for a
-    single-option slot, so it silently discards whatever value that slider sends.
-    The relocated slot's .vtx is patched in lockstep so the two tables never desync
-    (growing one without the other is a client crash -- confirmed 2026-07-07).
+def plan_bodygroup_layout(override_groups, target_groups):
+    """Compute the full REBUILT bodypart layout for an override model against the
+    native (target) model's bodygroup table. Returns a list `slots`; slots[i]
+    describes what should occupy position i of the rebuilt table:
+      {"kind": "move", "source_index": int, "base": int, "count": int, "name": str}
+      {"kind": "keep", "source_index": int}
+      {"kind": "empty"}
 
-    IMPORTANT: never collapse submodel counts of unmapped groups (only rename them).
-    Richly-bodygrouped models (e.g. anime models like Shiroko, with separate
-    Clothes/Coat/Glove/Scarf/Shoes/Socks groups) have more clothing groups than the
-    target slot; forcing those extra groups to count=1 pins them to submodel 0,
-    which hides clothing pieces and corrupts the body-index decode (this is what
-    "bugged out the clothing textures"). Leaving the counts native keeps every
-    clothing submodel intact; the model spawns at body=0, its default fully-dressed
-    outfit.
+    Every configurable override group with a genuine 1:1 native name match (via the
+    now-collision-free bodygroup_compat_map) is relocated onto the native's index,
+    with the native's base and an honestly-capped count -- unconditionally, even if
+    it's already sitting at that same index, because "same index" alone doesn't mean
+    reachable: base is an independent, separately-stored multiplier (the bit position
+    within the networked body int), computed from THIS model's own preceding groups.
+    Two models can agree on (index, count) at a slot and still disagree on base if
+    their OTHER groups differ in composition -- confirmed on Shiroko Mahiru's "Shoes"
+    (own base 64) vs Ibuki's same-index "bracelet Right" (base 256): count matched,
+    base didn't, and the slider silently drove an unrelated bit.
 
-    Returns True if anything was changed on disk."""
+    Every other override index keeps its original position -- UNLESS a relocating
+    group's native slot lands exactly there, in which case the original occupant is
+    pushed to a fresh slot appended at the end. This is always safe: bystanders here
+    are either non-configurable (count 1 -- always renders submodel 0 regardless of
+    index or of whether the server even has a slot there) or configurable extras
+    with no native match at all (already unreachable/extra; being appended past
+    native's range doesn't change that, and they keep showing their own default
+    submodel exactly as before)."""
     compat = bodygroup_compat_map(target_groups, override_groups)
-    target_by_index = {int(g["index"]): g for g in target_groups}
+    override_by_index = {int(g["index"]): g for g in override_groups}
+    numbodyparts = (max(override_by_index) + 1) if override_by_index else 0
 
-    renames = {}
-    best_match = {}
-    for _target_index, item in compat.items():
-        target_name = item.get("target_name") or ""
+    move_plan = {}
+    claimed = set()
+    for target_index, item in compat.items():
+        if int(item.get("target_count") or 1) <= 1:
+            continue
         override_index = item.get("override_index")
         if override_index is None:
             continue
         override_index = int(override_index)
-        if target_name:
-            renames.setdefault(override_index, target_name)
-        if int(item.get("target_count") or 1) > 1:
-            best_match.setdefault(override_index, item)
+        source_count = int(override_by_index[override_index].get("count") or 1)
+        move_plan[override_index] = {
+            "final_index": int(target_index),
+            "base": int(item["target_base"]),
+            "count": max(1, min(source_count, int(item["target_count"]))),
+            "name": item.get("target_name") or override_by_index[override_index].get("name"),
+        }
+        claimed.add(int(target_index))
 
-    changed = False
-    for group in override_groups:
-        override_index = int(group["index"])
-        if int(group.get("count") or 1) <= 1:
-            continue
-        native_here = target_by_index.get(override_index)
-        if native_here and int(native_here.get("count") or 1) > 1:
-            continue  # already reachable at this exact slot; a rename is enough
-        match = best_match.get(override_index)
-        if not match:
-            continue
-        if patch_mdl_relocate_bodygroup(
-            copied_mdl, override_index,
-            match["target_base"], match["target_count"],
-            match.get("target_name") or group.get("name"),
-        ):
-            for vtx_path in vtx_paths_for_mdl(copied_mdl):
-                patch_vtx_relocate_bodygroup(vtx_path, override_index)
-            changed = True
-            renames.pop(override_index, None)
+    bystanders = [i for i in range(numbodyparts) if i not in move_plan and i in claimed]
+    tail = max(numbodyparts, (max(claimed) + 1) if claimed else 0)
+    total = tail + len(bystanders)
+    slots = [None] * total
 
-    changed_names = patch_mdl_bodygroup_names(copied_mdl, renames)
-    return changed or changed_names
+    for i in range(numbodyparts):
+        if i in move_plan or i in claimed:
+            continue
+        slots[i] = {"kind": "keep", "source_index": i}
+
+    for override_index, info in move_plan.items():
+        slots[info["final_index"]] = {
+            "kind": "move", "source_index": override_index,
+            "base": info["base"], "count": info["count"], "name": info["name"],
+        }
+
+    for i, source_index in enumerate(bystanders):
+        slots[tail + i] = {"kind": "keep", "source_index": source_index}
+
+    for i in range(total):
+        if slots[i] is None:
+            slots[i] = {"kind": "empty"}
+    return slots
+
+
+def _bodygroup_layout_is_noop(slots):
+    return all(s["kind"] == "keep" and s["source_index"] == i for i, s in enumerate(slots))
+
+
+def patch_mdl_relocate_bodygroups(path, slots):
+    """Rebuild a .mdl's bodypart table to the layout computed by plan_bodygroup_layout.
+    Every 'move'/'keep' slot re-points at its ORIGINAL model data (nothing is ever
+    duplicated -- two bodyparts may safely share the same absolute model_abs, since
+    mesh data is looked up by (bodypart, model-within-bodypart) and multiple
+    bodyparts pointing at the same array just means they offer the same submodels).
+    'empty' slots get a freshly appended, genuinely EMPTY mstudiomodel_t (148 zeroed
+    bytes -- 0 meshes) so a vacated slot renders nothing instead of a leftover mesh
+    permanently drawn on top of whatever a relocated slot picks (confirmed
+    2026-07-07). Only ever grows the file (appends); never rewrites existing model
+    data in place. Caller MUST apply patch_vtx_relocate_bodygroups with the SAME
+    slots to every paired .vtx -- the engine indexes vtx bodyparts positionally
+    against the mdl's, and letting them diverge is a client crash (confirmed
+    2026-07-07)."""
+    if _bodygroup_layout_is_noop(slots):
+        return False
+    with open(path, "rb") as f:
+        data = bytearray(f.read())
+    if len(data) < 240:
+        return False
+    try:
+        numbodyparts, bodypartindex = struct.unpack_from("<ii", data, 232)
+    except struct.error:
+        return False
+    if numbodyparts <= 0 or bodypartindex <= 0:
+        return False
+
+    old_records = []
+    for index in range(numbodyparts):
+        offset = bodypartindex + index * 16
+        if offset + 16 > len(data):
+            return False
+        sznameindex, nummodels, base, modelindex = struct.unpack_from("<iiii", data, offset)
+        old_records.append({
+            "name_abs": offset + sznameindex,
+            "nummodels": nummodels,
+            "base": base,
+            "model_abs": offset + modelindex,
+        })
+
+    def append_name(name):
+        out = len(data)
+        data.extend(str(name or "").encode("utf-8") + b"\0")
+        return out
+
+    def append_empty_model():
+        out = len(data)
+        data.extend(b"\0" * 148)
+        return out
+
+    new_count = len(slots)
+    new_table = len(data)
+    data.extend(b"\0" * (new_count * 16))
+
+    for i, slot in enumerate(slots):
+        dest = new_table + i * 16
+        if slot["kind"] == "keep":
+            record = old_records[slot["source_index"]]
+            struct.pack_into(
+                "<iiii", data, dest,
+                record["name_abs"] - dest, record["nummodels"], record["base"],
+                record["model_abs"] - dest,
+            )
+        elif slot["kind"] == "move":
+            record = old_records[slot["source_index"]]
+            name_abs = append_name(slot["name"])
+            struct.pack_into(
+                "<iiii", data, dest,
+                name_abs - dest, slot["count"], slot["base"],
+                record["model_abs"] - dest,
+            )
+        else:
+            empty_abs = append_empty_model()
+            name_abs = append_name("")
+            struct.pack_into("<iiii", data, dest, name_abs - dest, 1, 1, empty_abs - dest)
+
+    struct.pack_into("<ii", data, 232, new_count, new_table)
+    struct.pack_into("<i", data, 76, len(data))
+    with open(path, "wb") as f:
+        f.write(data)
+    return True
+
+
+def patch_vtx_relocate_bodygroups(vtx_path, slots):
+    """The .vtx twin of patch_mdl_relocate_bodygroups -- same slots list, so the two
+    tables always describe the identical layout. 'keep' and 'move' both simply
+    re-point at their ORIGINAL absolute model location (vtx doesn't store a capped
+    count the way mdl does for honesty -- it just needs to have AT LEAST the real
+    submodel entries available for lookup; extras beyond whatever mdl's nummodels
+    allows are simply never selected, matching the count-capping already proven
+    safe). 'empty' slots get a freshly appended model with 1 LOD and 0 meshes."""
+    if _bodygroup_layout_is_noop(slots):
+        return False
+    with open(vtx_path, "rb") as f:
+        data = bytearray(f.read())
+    if len(data) < 36:
+        return False
+    numBodyParts, bodyPartOffset = struct.unpack_from("<ii", data, 28)
+    if numBodyParts <= 0:
+        return False
+
+    old_num_models = []
+    old_models_abs = []
+    for bp in range(numBodyParts):
+        bp_off = bodyPartOffset + bp * 8
+        if bp_off + 8 > len(data):
+            return False
+        num_models, model_offset_rel = struct.unpack_from("<ii", data, bp_off)
+        old_num_models.append(num_models)
+        old_models_abs.append(bp_off + model_offset_rel)
+
+    def append_empty_model():
+        model_off = len(data)
+        data.extend(b"\0" * 8)
+        lod_off = len(data)
+        data.extend(b"\0" * 12)
+        struct.pack_into("<ii", data, model_off, 1, lod_off - model_off)
+        struct.pack_into("<iif", data, lod_off, 0, 0, 0.0)
+        return model_off
+
+    new_count = len(slots)
+    new_table_off = len(data)
+    data.extend(b"\0" * (new_count * 8))
+
+    for i, slot in enumerate(slots):
+        rec_off = new_table_off + i * 8
+        if slot["kind"] in ("keep", "move"):
+            src = slot["source_index"]
+            if src >= len(old_num_models):
+                return False
+            struct.pack_into("<ii", data, rec_off, old_num_models[src], old_models_abs[src] - rec_off)
+        else:
+            empty_abs = append_empty_model()
+            struct.pack_into("<ii", data, rec_off, 1, empty_abs - rec_off)
+
+    struct.pack_into("<i", data, 28, new_count)
+    struct.pack_into("<i", data, 32, new_table_off)
+    with open(vtx_path, "wb") as f:
+        f.write(data)
+    return True
+
+
+def relocate_unreachable_bodygroups(copied_mdl, override_groups, target_groups):
+    """Shared by both the Default and retargeted install paths: compute the full
+    correct layout (plan_bodygroup_layout) and rebuild the .mdl and every paired
+    .vtx to match it in lockstep. Returns True if anything was changed on disk."""
+    slots = plan_bodygroup_layout(override_groups, target_groups)
+    changed_mdl = patch_mdl_relocate_bodygroups(copied_mdl, slots)
+    changed_vtx = False
+    if changed_mdl:
+        for vtx_path in vtx_paths_for_mdl(copied_mdl):
+            if patch_vtx_relocate_bodygroups(vtx_path, slots):
+                changed_vtx = True
+    return changed_mdl or changed_vtx
 
 
 def patch_retargeted_model_bodygroup_names(dest_folder, pack, target, source):
@@ -953,163 +1141,6 @@ def patch_retargeted_model_bodygroup_names(dest_folder, pack, target, source):
 def vtx_paths_for_mdl(mdl_path):
     base = mdl_path[:-4] if mdl_path.lower().endswith(".mdl") else mdl_path
     return [p for p in (base + ".dx90.vtx", base + ".dx80.vtx", base + ".sw.vtx") if os.path.exists(p)]
-
-
-def patch_vtx_relocate_bodygroup(vtx_path, source_index):
-    """Append a new BodyPartHeader_t table (old count + 1) at the end of the .vtx
-    file, mirroring patch_mdl_relocate_bodygroup: the NEW slot points at the SAME
-    already-existing model/mesh/stripgroup data as source_index (no vertex data is
-    duplicated), while the OLD slot is repointed at a freshly appended EMPTY model
-    (numLods=1, numMeshes=0) so it renders nothing instead of permanently drawing
-    submodel 0 on top of whatever the new, genuinely reachable slot selects -- two
-    bodyparts sharing one real mesh subtree both render simultaneously (they're
-    independent draw calls), which looked like "the slider moves but the outfit
-    never visibly changes" (confirmed 2026-07-07: the always-on old slot was
-    permanently drawing outfit1 underneath/over whatever the new slot picked).
-    Every original bodypart's OWN model data keeps its original absolute location;
-    only the table itself (and the two header fields that locate it) are rewritten,
-    so nothing before the old bodyPartOffset is touched. This MUST be kept in
-    lockstep with any .mdl bodypart count change -- the engine indexes vtx
-    bodyparts positionally against the mdl's, and growing one without the other is
-    a client crash (confirmed 2026-07-07)."""
-    with open(vtx_path, "rb") as f:
-        data = bytearray(f.read())
-    if len(data) < 36:
-        return False
-    numBodyParts, bodyPartOffset = struct.unpack_from("<ii", data, 28)
-    if numBodyParts <= 0 or not (0 <= source_index < numBodyParts):
-        return False
-
-    old_models_abs = []
-    old_num_models = []
-    for bp in range(numBodyParts):
-        bp_off = bodyPartOffset + bp * 8
-        if bp_off + 8 > len(data):
-            return False
-        num_models, model_offset_rel = struct.unpack_from("<ii", data, bp_off)
-        old_num_models.append(num_models)
-        old_models_abs.append(bp_off + model_offset_rel)
-
-    # Empty model subtree: ModelHeader_t{numLods=1, lodOffset->LOD} -> ModelLODHeader_t
-    # {numMeshes=0}. numMeshes=0 means nothing ever dereferences meshOffset, so it's
-    # safe to leave it pointing at itself (relative offset 0).
-    empty_model_off = len(data)
-    data.extend(b"\0" * 8)   # ModelHeader_t
-    empty_lod_off = len(data)
-    data.extend(b"\0" * 12)  # ModelLODHeader_t
-    struct.pack_into("<ii", data, empty_model_off, 1, empty_lod_off - empty_model_off)
-    struct.pack_into("<iif", data, empty_lod_off, 0, 0, 0.0)
-
-    new_count = numBodyParts + 1
-    new_table_off = len(data)
-    data.extend(b"\0" * (new_count * 8))
-
-    for i in range(numBodyParts):
-        rec_off = new_table_off + i * 8
-        model_abs = empty_model_off if i == source_index else old_models_abs[i]
-        num_models = 1 if i == source_index else old_num_models[i]
-        struct.pack_into("<ii", data, rec_off, num_models, model_abs - rec_off)
-
-    new_rec_off = new_table_off + numBodyParts * 8
-    struct.pack_into(
-        "<ii", data, new_rec_off,
-        old_num_models[source_index], old_models_abs[source_index] - new_rec_off,
-    )
-
-    struct.pack_into("<i", data, 28, new_count)        # FileHeader_t.numBodyParts
-    struct.pack_into("<i", data, 32, new_table_off)    # FileHeader_t.bodyPartOffset
-
-    with open(vtx_path, "wb") as f:
-        f.write(data)
-    return True
-
-
-def patch_mdl_relocate_bodygroup(path, source_index, native_base, native_count, new_name):
-    """Move a bodygroup's real submodels onto a NEW slot at the end of the table, so it
-    lines up with the index/base the server-native model actually networks a multi-option
-    slot at. The old slot is neutralized (count clamped to 1, nothing else touched) so it
-    stops showing a dead slider instead of being deleted outright.
-
-    This only ever GROWS the table (appends one record); it never rewrites or removes
-    existing model/name data, so every other bodygroup keeps working exactly as before.
-    Caller MUST also relocate the paired .vtx file(s) via patch_vtx_relocate_bodygroup --
-    the two tables are indexed positionally by the engine and must stay in lockstep.
-    """
-    with open(path, "rb") as f:
-        data = bytearray(f.read())
-    if len(data) < 240:
-        return False
-    try:
-        numbodyparts, bodypartindex = struct.unpack_from("<ii", data, 232)
-    except struct.error:
-        return False
-    if numbodyparts <= 0 or bodypartindex <= 0 or not (0 <= source_index < numbodyparts):
-        return False
-
-    old_records = []
-    for index in range(numbodyparts):
-        offset = bodypartindex + index * 16
-        if offset + 16 > len(data):
-            return False
-        sznameindex, nummodels, base, modelindex = struct.unpack_from("<iiii", data, offset)
-        old_records.append({
-            "name_abs": offset + sznameindex,
-            "nummodels": nummodels,
-            "base": base,
-            "model_abs": offset + modelindex,
-        })
-
-    source = old_records[source_index]
-    new_numbodyparts = numbodyparts + 1
-
-    # A genuinely EMPTY mstudiomodel_t (148 bytes, all zero -- 0 meshes, 0 vertices) for
-    # the old slot to point at. Without this, the old slot would keep pointing at the
-    # real submodel data (e.g. submodel 0, "outfit1"), and since it's still a SEPARATE
-    # bodypart from the new slot, the engine draws BOTH every frame -- the old slot's
-    # mesh renders permanently on top of/underneath whatever the new, genuinely
-    # reachable slot selects, which looks like "the slider moves but nothing visibly
-    # changes" (confirmed 2026-07-07).
-    empty_model_abs = len(data)
-    data.extend(b"\0" * 148)
-
-    new_table = len(data)
-    data.extend(b"\0" * (new_numbodyparts * 16))
-
-    def append_name(name):
-        out = len(data)
-        data.extend(str(name or "").encode("utf-8") + b"\0")
-        return out
-
-    for index in range(numbodyparts):
-        dest = new_table + index * 16
-        record = old_records[index]
-        is_source = index == source_index
-        nummodels = 1 if is_source else record["nummodels"]
-        model_abs = empty_model_abs if is_source else record["model_abs"]
-        struct.pack_into(
-            "<iiii", data, dest,
-            record["name_abs"] - dest,
-            nummodels,
-            record["base"],
-            model_abs - dest,
-        )
-
-    dest = new_table + numbodyparts * 16
-    name_abs = append_name(new_name)
-    count = max(1, min(int(source["nummodels"]), int(native_count)))
-    struct.pack_into(
-        "<iiii", data, dest,
-        name_abs - dest,
-        count,
-        max(1, int(native_base)),
-        source["model_abs"] - dest,
-    )
-
-    struct.pack_into("<ii", data, 232, new_numbodyparts, new_table)
-    struct.pack_into("<i", data, 76, len(data))
-    with open(path, "wb") as f:
-        f.write(data)
-    return True
 
 
 def patch_default_model_bodygroup_names(dest_folder, pack, source):

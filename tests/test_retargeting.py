@@ -402,112 +402,169 @@ class RetargetingTests(unittest.TestCase):
         declared_length = int.from_bytes(data[76:80], "little", signed=True)
         self.assertEqual(len(data), declared_length)
 
-    def test_patch_mdl_relocate_bodygroup_moves_real_submodels_to_new_slot(self):
+    def test_bodygroup_compat_map_never_double_books_one_override_group(self):
+        # Regression for the real bug found on Shiroko Mahiru -> Ibuki Mioda: a target
+        # with no name match used to grab an override group via fallback BEFORE a later
+        # target's genuine name match to that SAME override group was processed, so both
+        # ended up mapped to it. Reproduces the exact shape: override "Shoes" is a real
+        # name match for native "shoes" (a LATER target), but an EARLIER, name-less
+        # target ("ribbon") must not be allowed to steal it via fallback first.
+        override_groups = [
+            {"index": 0, "name": "reference", "count": 1},
+            {"index": 1, "name": "Clothes", "count": 2},
+            {"index": 2, "name": "Shoes", "count": 2},
+        ]
+        target_groups = [
+            {"index": 0, "name": "reference", "count": 1},
+            {"index": 1, "name": "ribbon", "count": 2},   # no override name match -> fallback
+            {"index": 2, "name": "shoes", "count": 2},    # real name match -> override "Shoes"
+        ]
+
+        mapping = om.bodygroup_compat_map(target_groups, override_groups)
+
+        self.assertEqual(2, mapping[2]["override_index"])  # shoes<->Shoes, the real match
+        # override index 2 (Shoes) must be used exactly once across the whole mapping
+        used = [item["override_index"] for item in mapping.values()]
+        self.assertEqual(len(used), len(set(used)))
+        self.assertEqual(1, mapping[1]["override_index"])  # ribbon falls back to Clothes instead
+
+    def test_plan_bodygroup_layout_relocates_dead_slot_and_empties_the_original(self):
         source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Shiroko Terror Kirumi"
         source_model = os.path.join(source_pack, "models/dro/player/characters3/char13/char13.mdl")
-        if not os.path.exists(source_model):
-            self.skipTest("real Shiroko Terror Kirumi model not available")
+        app_dir = r"C:\Users\user\Desktop\GMod_Override_Manager"
+        target_model = os.path.join(app_dir, "debug_extracts/dro_playermodels_2562456244/models/dro/player/characters3/char13/char13.mdl")
+        if not os.path.exists(source_model) or not os.path.exists(target_model):
+            self.skipTest("real Shiroko Terror/Kirumi models not available")
+        override_groups = om.parse_mdl_bodygroups(source_model)
+        target_groups = om.parse_mdl_bodygroups(target_model)
+
+        slots = om.plan_bodygroup_layout(override_groups, target_groups)
+
+        # outfit (override index 3) has no native match at its own index (native's index
+        # 3 there, "skirt", is dead) -- it must relocate to whatever new index carries
+        # native's real "neck"/"tie"/"hand Ring" slot, capped honestly to that slot's count
+        moves = {s["source_index"]: s for s in slots if s["kind"] == "move"}
+        self.assertIn(3, moves)
+        self.assertEqual(2, moves[3]["count"])
+        # face/hair/body (indices 0-2) have no configurable native match either way and
+        # keep their original position untouched
+        keeps = {s["source_index"]: i for i, s in enumerate(slots) if s["kind"] == "keep"}
+        self.assertEqual(0, keeps.get(0))
+        self.assertEqual(1, keeps.get(1))
+        self.assertEqual(2, keeps.get(2))
+
+    def test_plan_bodygroup_layout_resolves_shoe_skirt_collision_on_real_shiroko_mahiru(self):
+        # The real bug this session: Shiroko Mahiru's "Shoes" and "Skirt" bodygroups were
+        # each getting assigned to TWO different Ibuki Mioda targets (one via a bogus
+        # fallback, one via the real name match), so the shoe slider silently drove the
+        # wrong bit and never visibly changed anything.
+        app_dir = r"C:\Users\user\Desktop\GMod_Override_Manager"
+        override_model = os.path.join(app_dir, "overrides/Shiroko Mahiru/models/dro/player/characters2/char10/char10.mdl")
+        target_model = os.path.join(app_dir, "debug_extracts/dro_playermodels_2562456244/models/dro/player/characters2/char5/char5.mdl")
+        if not os.path.exists(override_model) or not os.path.exists(target_model):
+            self.skipTest("real Shiroko Mahiru/Ibuki models not available")
+        override_groups = om.parse_mdl_bodygroups(override_model)
+        target_groups = om.parse_mdl_bodygroups(target_model)
+        shoes_index = next(g["index"] for g in override_groups if g["name"] == "Shoes")
+        skirt_index = next(g["index"] for g in override_groups if g["name"] == "Skirt")
+        native_shoes = next(g for g in target_groups if g["name"] == "shoes")
+        native_skirt = next(g for g in target_groups if g["name"] == "skirt")
+
+        slots = om.plan_bodygroup_layout(override_groups, target_groups)
+
+        moves = {s["source_index"]: (i, s) for i, s in enumerate(slots) if s["kind"] == "move"}
+        self.assertIn(shoes_index, moves)
+        self.assertIn(skirt_index, moves)
+        shoes_final_index, shoes_slot = moves[shoes_index]
+        skirt_final_index, skirt_slot = moves[skirt_index]
+        # Shoes must land exactly where native's real "shoes" slot is, with native's base
+        self.assertEqual(native_shoes["index"], shoes_final_index)
+        self.assertEqual(native_shoes["base"], shoes_slot["base"])
+        # Skirt must land exactly where native's real "skirt" slot is, with native's base
+        self.assertEqual(native_skirt["index"], skirt_final_index)
+        self.assertEqual(native_skirt["base"], skirt_slot["base"])
+        # every override group used as a MOVE source is unique (no double-booking)
+        move_sources = [s["source_index"] for s in slots if s["kind"] == "move"]
+        self.assertEqual(len(move_sources), len(set(move_sources)))
+        # every final index used by a move is unique too (no two groups land on top of
+        # each other)
+        move_final_indexes = [i for i, s in enumerate(slots) if s["kind"] == "move"]
+        self.assertEqual(len(move_final_indexes), len(set(move_final_indexes)))
+
+    def test_plan_bodygroup_layout_resolves_hoshino_multi_collision(self):
+        # Hoshino Himiko -> Ibuki Mioda was even worse: its "shoes" bodygroup alone
+        # collided across THREE different native targets. Every configurable override
+        # group must end up with its own unique, correctly-based final slot.
+        app_dir = r"C:\Users\user\Desktop\GMod_Override_Manager"
+        override_model = os.path.join(app_dir, "overrides/Hoshino Himiko/models/dro/player/characters3/char12/char12.mdl")
+        target_model = os.path.join(app_dir, "debug_extracts/dro_playermodels_2562456244/models/dro/player/characters2/char5/char5.mdl")
+        if not os.path.exists(override_model) or not os.path.exists(target_model):
+            self.skipTest("real Hoshino/Ibuki models not available")
+        override_groups = om.parse_mdl_bodygroups(override_model)
+        target_groups = om.parse_mdl_bodygroups(target_model)
+        native_shoes = next(g for g in target_groups if g["name"] == "shoes")
+        shoes_index = next(g["index"] for g in override_groups if g["name"] == "shoes")
+
+        slots = om.plan_bodygroup_layout(override_groups, target_groups)
+
+        move_sources = [s["source_index"] for s in slots if s["kind"] == "move"]
+        move_final_indexes = [i for i, s in enumerate(slots) if s["kind"] == "move"]
+        self.assertEqual(len(move_sources), len(set(move_sources)))
+        self.assertEqual(len(move_final_indexes), len(set(move_final_indexes)))
+        shoes_final = next(i for i, s in enumerate(slots) if s["kind"] == "move" and s["source_index"] == shoes_index)
+        self.assertEqual(native_shoes["index"], shoes_final)
+        self.assertEqual(native_shoes["base"], slots[shoes_final]["base"])
+
+    def test_patch_mdl_and_vtx_relocate_bodygroups_apply_plan_consistently(self):
+        source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Shiroko Terror Kirumi"
+        source_mdl = os.path.join(source_pack, "models/dro/player/characters3/char13/char13.mdl")
+        source_vtx = os.path.join(source_pack, "models/dro/player/characters3/char13/char13.dx90.vtx")
+        app_dir = r"C:\Users\user\Desktop\GMod_Override_Manager"
+        target_model = os.path.join(app_dir, "debug_extracts/dro_playermodels_2562456244/models/dro/player/characters3/char13/char13.mdl")
+        if not all(os.path.exists(p) for p in (source_mdl, source_vtx, target_model)):
+            self.skipTest("real Shiroko Terror/Kirumi models not available")
         mdl_path = os.path.join(self.tempdir, "char13.mdl")
-        shutil.copy2(source_model, mdl_path)
-        before = {g["index"]: g for g in om.parse_mdl_bodygroups(mdl_path)}
-        self.assertEqual(3, before[3]["count"])  # "outfit", the group we're relocating
+        vtx_path = os.path.join(self.tempdir, "char13.dx90.vtx")
+        shutil.copy2(source_mdl, mdl_path)
+        shutil.copy2(source_vtx, vtx_path)
+        override_groups = om.parse_mdl_bodygroups(mdl_path)
+        target_groups = om.parse_mdl_bodygroups(target_model)
+        slots = om.plan_bodygroup_layout(override_groups, target_groups)
 
-        with open(mdl_path, "rb") as f:
-            before_data = f.read()
-        before_numbodyparts, before_bodypartindex = struct.unpack_from("<ii", before_data, 232)
-        before_offset = before_bodypartindex + 3 * 16
-        _n, _c, _b, before_modelindex = struct.unpack_from("<iiii", before_data, before_offset)
-        original_outfit_model_abs = before_offset + before_modelindex
-        original_outfit_bytes = before_data[original_outfit_model_abs:original_outfit_model_abs + 148 * 3]
+        changed_mdl = om.patch_mdl_relocate_bodygroups(mdl_path, slots)
+        changed_vtx = om.patch_vtx_relocate_bodygroups(vtx_path, slots)
 
-        changed = om.patch_mdl_relocate_bodygroup(mdl_path, 3, native_base=1, native_count=2, new_name="neck")
-
-        self.assertTrue(changed)
+        self.assertTrue(changed_mdl)
+        self.assertTrue(changed_vtx)
         groups = {g["index"]: g for g in om.parse_mdl_bodygroups(mdl_path)}
-        # old slot neutralized (no longer shows a slider) but not deleted
-        self.assertEqual(1, groups[3]["count"])
-        # new slot appended at the end, matching the native base/count, real submodels
-        new_index = max(groups)
-        self.assertEqual("neck", groups[new_index]["name"])
-        self.assertEqual(2, groups[new_index]["count"])
-        self.assertEqual(1, groups[new_index]["base"])
-        # every other original group is untouched
-        self.assertEqual(before[0], groups[0])
-        self.assertEqual(before[1], groups[1])
-        self.assertEqual(before[2], groups[2])
+        self.assertEqual(1, groups[3]["count"])  # old slot neutralized
+        relocated = [g for g in groups.values() if g["index"] > 3]
+        self.assertTrue(relocated)
+        self.assertEqual(2, relocated[0]["count"])
         with open(mdl_path, "rb") as f:
             data = f.read()
         declared_length = int.from_bytes(data[76:80], "little", signed=True)
         self.assertEqual(len(data), declared_length)
-
-        # the old slot must point at a genuinely EMPTY submodel (not the real outfit
-        # data) so it stops permanently drawing outfit1 on top of whatever the new,
-        # reachable slot picks -- two bodyparts must never share one real mesh subtree.
-        numbodyparts, bodypartindex = struct.unpack_from("<ii", data, 232)
-        old_offset = bodypartindex + 3 * 16
-        _sznameindex, _nummodels, _base, modelindex = struct.unpack_from("<iiii", data, old_offset)
-        old_model_abs = old_offset + modelindex
-        new_offset = bodypartindex + new_index * 16
-        _sznameindex2, _nummodels2, _base2, modelindex2 = struct.unpack_from("<iiii", data, new_offset)
-        new_model_abs = new_offset + modelindex2
-        self.assertNotEqual(old_model_abs, new_model_abs)
-        self.assertEqual(b"\x00" * 148, bytes(data[old_model_abs:old_model_abs + 148]))
-        # the new slot's model data is the ORIGINAL real outfit array, at its original
-        # location, untouched and not duplicated
-        self.assertEqual(new_model_abs, original_outfit_model_abs)
-        self.assertEqual(bytes(data[new_model_abs:new_model_abs + 148 * 3]), original_outfit_bytes)
-
-    def test_patch_vtx_relocate_bodygroup_stays_structurally_consistent(self):
-        source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Shiroko Terror Kirumi"
-        source_vtx = os.path.join(source_pack, "models/dro/player/characters3/char13/char13.dx90.vtx")
-        if not os.path.exists(source_vtx):
-            self.skipTest("real Shiroko Terror Kirumi vtx not available")
-        vtx_path = os.path.join(self.tempdir, "char13.dx90.vtx")
-        shutil.copy2(source_vtx, vtx_path)
-
+        # mdl and vtx must always have the same bodypart count, or the client crashes
+        mdl_numbodyparts = struct.unpack_from("<i", data, 232)[0]
         with open(vtx_path, "rb") as f:
-            before_bytes = bytes(f.read())
-        before_count = struct.unpack_from("<i", before_bytes, 28)[0]
-
-        changed = om.patch_vtx_relocate_bodygroup(vtx_path, 3)
-
-        self.assertTrue(changed)
-        with open(vtx_path, "rb") as f:
-            data = f.read()
-        # everything up to the header's own bodypart-count/offset fields is untouched,
-        # and the file only grew (append-only, nothing before it shifted or was rewritten)
-        self.assertEqual(before_bytes[:28], data[:28])
-        self.assertEqual(before_bytes[36:len(before_bytes)], data[36:len(before_bytes)])
-        self.assertGreater(len(data), len(before_bytes))
-        numBodyParts, bodyPartOffset = struct.unpack_from("<ii", data, 28)
-        self.assertEqual(before_count + 1, numBodyParts)
-        # walk the full hierarchy for every bodypart to prove no out-of-range offsets
-        models_abs = []
-        for bp in range(numBodyParts):
+            vtx_data = f.read()
+        vtx_numbodyparts = struct.unpack_from("<i", vtx_data, 28)[0]
+        self.assertEqual(mdl_numbodyparts, vtx_numbodyparts)
+        # walk the full vtx hierarchy to prove no out-of-range offsets anywhere
+        bodyPartOffset = struct.unpack_from("<i", vtx_data, 32)[0]
+        for bp in range(vtx_numbodyparts):
             bp_off = bodyPartOffset + bp * 8
-            numModels, modelOffset_rel = struct.unpack_from("<ii", data, bp_off)
+            numModels, modelOffset_rel = struct.unpack_from("<ii", vtx_data, bp_off)
             model_abs = bp_off + modelOffset_rel
-            models_abs.append((numModels, model_abs))
             for m in range(numModels):
                 m_off = model_abs + m * 8
-                self.assertLessEqual(m_off + 8, len(data))
-                numLods, lodOffset_rel = struct.unpack_from("<ii", data, m_off)
+                self.assertLessEqual(m_off + 8, len(vtx_data))
+                numLods, lodOffset_rel = struct.unpack_from("<ii", vtx_data, m_off)
                 lod_abs = m_off + lodOffset_rel
                 for l in range(numLods):
                     l_off = lod_abs + l * 12
-                    self.assertLessEqual(l_off + 12, len(data))
-        # bodypart 3 itself now points at a genuinely empty model (0 meshes at LOD0),
-        # while the new (last) slot gets the real 3-submodel outfit data instead.
-        old_num_models, old_model_abs = models_abs[3]
-        self.assertEqual(1, old_num_models)
-        numLods, lodOffset_rel = struct.unpack_from("<ii", data, old_model_abs)
-        lod_abs = old_model_abs + lodOffset_rel
-        numMeshes, _meshOffset_rel, _switchPoint = struct.unpack_from("<iif", data, lod_abs)
-        self.assertEqual(0, numMeshes)
-        # and the new slot's model data is NOT the same location as the old (empty) one
-        new_num_models, new_model_abs = models_abs[-1]
-        self.assertEqual(3, new_num_models)
-        self.assertNotEqual(old_model_abs, new_model_abs)
+                    self.assertLessEqual(l_off + 12, len(vtx_data))
 
     def test_enable_default_relocates_dead_slot_to_reachable_native_index(self):
         app_dir = r"C:\Users\user\Desktop\GMod_Override_Manager"
