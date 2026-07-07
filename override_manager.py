@@ -53,7 +53,7 @@ OLD_COMMUNITY_INDEX_URLS = {
 # Cloud presence backend (Cloudflare Worker - see presence_worker.js). Baked in so
 # all app users share it with zero config. Empty string = cloud presence disabled.
 DEFAULT_PRESENCE_URL = ""
-APP_VERSION = "1.22"
+APP_VERSION = "1.23"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -1127,15 +1127,596 @@ def relocate_unreachable_bodygroups(copied_mdl, override_groups, target_groups):
     return changed_mdl or changed_vtx
 
 
+def parse_phy_physics_bone_names(phy_path):
+    """The .phy's ragdoll solids reference bones by NAME in a text keyvalues
+    block at the end of the file ('solid { "name" "ValveBiped.Bip01_..." }').
+    This is the authoritative list of which bones actually matter for ragdoll
+    physics -- typically only ~15-30 of a model's bones, and always the plain
+    ValveBiped skeleton, never cosmetic/jiggle bones. Returns a list of names
+    in solid order (in practice, root-to-extremity order)."""
+    try:
+        with open(phy_path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return []
+    idx = data.find(b"solid {")
+    if idx < 0:
+        return []
+    text = data[idx:].decode("latin-1", "replace")
+    return re.findall(r'"name"\s*"([^"]+)"', text)
+
+
+def compute_bone_permutation(override_mdl, stock_mdl, stock_phy):
+    """Server-side ragdoll physics is simulated against the STOCK model's own
+    bone table (the server never has the override's files), and the resulting
+    per-bone transforms are applied to bones BY INDEX -- so an override whose
+    physics-relevant bones sit at different table indices than stock gets
+    garbage transforms applied to the wrong bones (this is what produces a
+    stretched/mangled ragdoll, confirmed 2026-07-07 against a real installed
+    pack). Fix: permute the override's OWN bone table so every bone that
+    stock's .phy actually simulates lands at the SAME index stock uses for it
+    -- everything else (cosmetic/jiggle bones on either side) just fills the
+    remaining slots in their original relative order, so nothing needs to be
+    invented or dropped. Returns {old_index: new_index} covering every bone in
+    the override, or {} if there's nothing to do (already aligned, or no
+    bones in common)."""
+    override_bones = parse_mdl_bones(override_mdl)
+    stock_bones = parse_mdl_bones(stock_mdl)
+    override_order = override_bones.get("__order__") or []
+    stock_order = stock_bones.get("__order__") or []
+    if not override_order or not stock_order:
+        return {}
+
+    physics_names = parse_phy_physics_bone_names(stock_phy)
+    anchors = []  # (old_index, new_index)
+    seen_targets = set()
+    for name in physics_names:
+        if name not in override_bones or name not in stock_bones:
+            continue
+        old_index = override_bones[name]["index"]
+        new_index = stock_bones[name]["index"]
+        if new_index in seen_targets or new_index >= len(override_order):
+            continue
+        seen_targets.add(new_index)
+        anchors.append((old_index, new_index))
+
+    if not anchors:
+        return {}
+
+    perm = {old: new for old, new in anchors}
+    if all(old == new for old, new in anchors):
+        return {}  # already aligned -- nothing to do
+
+    claimed_targets = set(perm.values())
+    available_slots = [i for i in range(len(override_order)) if i not in claimed_targets]
+    remaining_old = [i for i in range(len(override_order)) if i not in perm]
+    for old_index, new_index in zip(remaining_old, available_slots):
+        perm[old_index] = new_index
+    return perm
+
+
+def patch_mdl_permute_bones(mdl_path, perm):
+    """Rewrite the .mdl bone table so bone `old_index` moves to `perm[old_index]`,
+    fixing up every reference that moves with it: the bone's own `parent` index,
+    every attachment's `localbone`, and the record's internal name/surfaceprop
+    string offsets (which are relative to the record's OWN position, so they
+    must be recomputed when a record physically moves). This never changes the
+    bone count or table location -- it's an in-place reshuffle, not a resize,
+    so it carries none of the offset-desync risk an append/grow operation
+    would. Caller must also permute the paired .vvd and every .vtx (see
+    patch_vvd_permute_bones / patch_vtx_permute_bones) -- those hold their own,
+    separate per-vertex bone indices that this function does not touch."""
+    if not perm or all(k == v for k, v in perm.items()):
+        return False
+    with open(mdl_path, "rb") as f:
+        data = bytearray(f.read())
+    if len(data) < 164:
+        return False
+    numbones, boneindex = struct.unpack_from("<ii", data, 156)
+    if numbones <= 0 or set(perm.keys()) != set(range(numbones)):
+        return False  # perm must be a full permutation of every bone in this file
+
+    REC = 216
+    old_records = bytes(data[boneindex:boneindex + numbones * REC])
+
+    def read_record_fields(rec):
+        sznameindex, parent = struct.unpack_from("<ii", rec, 0)
+        proc_type, proc_offset = struct.unpack_from("<ii", rec, 164)
+        surfaceprop_index, = struct.unpack_from("<i", rec, 176)
+        return sznameindex, parent, proc_type, proc_offset, surfaceprop_index
+
+    new_records = bytearray(old_records)
+    for old_index in range(numbones):
+        old_rec_start = old_index * REC
+        old_rec = old_records[old_rec_start:old_rec_start + REC]
+        sznameindex, parent, proc_type, proc_offset, surfaceprop_index = read_record_fields(old_rec)
+
+        new_index = perm[old_index]
+        new_rec_start = new_index * REC
+        rec = bytearray(old_rec)
+
+        old_abs_start = boneindex + old_rec_start
+        new_abs_start = boneindex + new_rec_start
+
+        name_abs = old_abs_start + sznameindex
+        struct.pack_into("<i", rec, 0, name_abs - new_abs_start)
+
+        new_parent = perm[parent] if parent >= 0 else -1
+        struct.pack_into("<i", rec, 4, new_parent)
+
+        if proc_type != 0 and proc_offset != 0:
+            proc_abs = old_abs_start + proc_offset
+            struct.pack_into("<i", rec, 168, proc_abs - new_abs_start)
+
+        if surfaceprop_index != 0:
+            surfaceprop_abs = old_abs_start + surfaceprop_index
+            struct.pack_into("<i", rec, 176, surfaceprop_abs - new_abs_start)
+
+        new_records[new_rec_start:new_rec_start + REC] = rec
+
+    data[boneindex:boneindex + numbones * REC] = new_records
+
+    numattach, attachindex = struct.unpack_from("<ii", data, 240)
+    for i in range(max(0, numattach)):
+        off = attachindex + i * 92
+        if off + 92 > len(data):
+            break
+        localbone, = struct.unpack_from("<i", data, off + 8)
+        if 0 <= localbone < numbones:
+            struct.pack_into("<i", data, off + 8, perm[localbone])
+
+    with open(mdl_path, "wb") as f:
+        f.write(data)
+    return True
+
+
+def patch_vvd_permute_bones(vvd_path, perm):
+    """The .vvd's per-vertex mstudioboneweight_t stores up to 3 bone indices
+    (signed bytes) per vertex. Same permutation as patch_mdl_permute_bones,
+    applied to every vertex in every LOD (the whole vertex array is remapped
+    uniformly -- LOD boundaries don't matter here since we're relabeling
+    indices, not touching which vertices exist)."""
+    if not perm:
+        return False
+    with open(vvd_path, "rb") as f:
+        data = bytearray(f.read())
+    if len(data) < 64:
+        return False
+    numlods, = struct.unpack_from("<i", data, 12)
+    num_lod_vertexes = struct.unpack_from("<8i", data, 16)
+    vertex_data_start, tangent_data_start = struct.unpack_from("<ii", data, 56)
+    if numlods <= 0 or vertex_data_start <= 0:
+        return False
+    total_vertices = max(num_lod_vertexes[:max(1, numlods)])
+    VERTEX_SIZE = 48
+    changed = False
+    for v in range(total_vertices):
+        off = vertex_data_start + v * VERTEX_SIZE
+        if off + 16 > len(data):
+            break
+        bone0, bone1, bone2, numbones_here = struct.unpack_from("<bbbB", data, off + 12)
+        bones = [bone0, bone1, bone2]
+        new_bones = list(bones)
+        for k in range(min(3, numbones_here)):
+            b = bones[k]
+            if b in perm:
+                new_bones[k] = perm[b]
+                changed = changed or (perm[b] != b)
+        struct.pack_into("<bbbB", data, off + 12, new_bones[0], new_bones[1], new_bones[2], numbones_here)
+    if changed:
+        with open(vvd_path, "wb") as f:
+            f.write(data)
+    return changed
+
+
+def _vtx_permute_strips(data, sg_entry, perm):
+    """Per-vertex bone_id in the .vtx is NOT a global bone index -- for
+    hardware-skinned strips it's a LOCAL slot number, scoped to that one
+    strip's own small remap table (confirmed 2026-07-07 against a real file:
+    a strip with bone_count=2 used local ids 0-5, resolved through its own
+    6-entry table to global bones 20/30/29/28/24/25). The vertex data must be
+    left untouched; only each strip's BoneStateChangeHeader_t.newBoneID
+    (the local->global table itself) needs remapping."""
+    _vc, _vo, _ic, _io, strip_count, strip_offset = struct.unpack_from("<iiiiii", data, sg_entry)
+    strip_table = sg_entry + strip_offset
+    STRIP_SIZE = 27
+    changed = False
+    for si in range(strip_count):
+        strip_entry = strip_table + si * STRIP_SIZE
+        if strip_entry + STRIP_SIZE > len(data):
+            break
+        bsc_count, bsc_offset = struct.unpack_from("<ii", data, strip_entry + 19)
+        bsc_abs = strip_entry + bsc_offset
+        for k in range(bsc_count):
+            off = bsc_abs + k * 8
+            if off + 8 > len(data):
+                break
+            hw_id, new_bone_id = struct.unpack_from("<ii", data, off)
+            if new_bone_id in perm and perm[new_bone_id] != new_bone_id:
+                struct.pack_into("<ii", data, off, hw_id, perm[new_bone_id])
+                changed = True
+    return changed
+
+
+def patch_vtx_permute_bones(vtx_path, perm):
+    """Walk the full .vtx hierarchy (bodypart -> model -> lod -> mesh ->
+    stripgroup -> strip) and remap each strip's hardware bone-remap table the
+    same way patch_mdl_permute_bones remapped the .mdl's bone table. Without
+    this the live (non-ragdoll) model would visibly break even though the
+    .mdl/.vvd are now correct, since the GPU skins from this table. Pure
+    in-place relabeling -- no offsets, counts, or table sizes change."""
+    if not perm:
+        return False
+    with open(vtx_path, "rb") as f:
+        data = bytearray(f.read())
+    if len(data) < 36:
+        return False
+    numBodyParts, bodyPartOffset = struct.unpack_from("<ii", data, 28)
+    if numBodyParts <= 0:
+        return False
+
+    changed = False
+    for bp in range(numBodyParts):
+        bp_entry = bodyPartOffset + bp * 8
+        if bp_entry + 8 > len(data):
+            break
+        model_count, model_offset = struct.unpack_from("<ii", data, bp_entry)
+        model_table = bp_entry + model_offset
+        for m in range(model_count):
+            model_entry = model_table + m * 8
+            if model_entry + 8 > len(data):
+                break
+            lod_count, lod_offset = struct.unpack_from("<ii", data, model_entry)
+            lod_table = model_entry + lod_offset
+            for lod in range(lod_count):
+                lod_entry = lod_table + lod * 12
+                if lod_entry + 12 > len(data):
+                    break
+                mesh_count, mesh_offset = struct.unpack_from("<ii", data, lod_entry)
+                mesh_table = lod_entry + mesh_offset
+                for mi in range(mesh_count):
+                    mesh_entry = mesh_table + mi * 9
+                    if mesh_entry + 9 > len(data):
+                        break
+                    sg_count, sg_offset = struct.unpack_from("<ii", data, mesh_entry)
+                    sg_table = mesh_entry + sg_offset
+                    for sgi in range(sg_count):
+                        sg_entry = sg_table + sgi * 25
+                        if sg_entry + 25 > len(data):
+                            break
+                        if _vtx_permute_strips(data, sg_entry, perm):
+                            changed = True
+
+    if changed:
+        with open(vtx_path, "wb") as f:
+            f.write(data)
+    return changed
+
+
+def patch_mdl_neuter_animdesc_ikrules(mdl_path, data=None):
+    """IK rules (mstudioikrule_t, referenced per-animation via ikrule_count/
+    ikrule_offset) apply real-time foot/hand placement corrections and
+    reference bones directly -- but unlike bones/attachments/vvd/vtx, their
+    binary layout isn't available from SourceIO's own parser to verify
+    against, so remapping them blind carries real risk (this is what actually
+    broke live playermodels the first time this was attempted, 2026-07-07).
+    Rather than guess, this zeroes ikrule_count on any local animation that
+    has one -- the rule data becomes unreferenced/inert instead of pointing at
+    a wrong bone. Small cosmetic cost (loses fine foot/hand IK correction on
+    those specific animations), no correctness risk. Returns (changed, data)
+    if a bytearray was passed in for chaining, else writes the file directly."""
+    owns_data = data is None
+    if owns_data:
+        with open(mdl_path, "rb") as f:
+            data = bytearray(f.read())
+    if len(data) < 184:
+        return (False, data) if not owns_data else False
+    numlocalanim, localanimindex = struct.unpack_from("<ii", data, 180)
+    REC = 100
+    changed = False
+    for i in range(max(0, numlocalanim)):
+        entry = localanimindex + i * REC
+        if entry + 64 > len(data):
+            break
+        ikrule_count, = struct.unpack_from("<I", data, entry + 60)
+        if ikrule_count:
+            struct.pack_into("<I", data, entry + 60, 0)
+            changed = True
+    if owns_data:
+        if changed:
+            with open(mdl_path, "wb") as f:
+                f.write(data)
+        return changed
+    return changed, data
+
+
+def patch_mdl_permute_sequences(mdl_path, perm, data=None):
+    """Sequences (mstudioseqdesc_t) carry their own bone-referencing data,
+    independent of animations -- verified byte-for-byte against SourceIO's
+    own sequence.py parser (unlike ikrule_t, this layout IS confirmed):
+    - ikrule_count / ik_lock_count: same real-time-correction hazard as the
+      per-animation IK rules, same fix (neuter rather than guess at the
+      referenced struct's layout).
+    - root_driver_bone_index: a direct bone index -- remapped via perm.
+    - the per-bone weight array (weight_offset, one float per skeleton bone):
+      POSITIONAL, not tagged -- reordered in lockstep with perm rather than
+      remapped by value, same idea as the vvd/vtx work."""
+    owns_data = data is None
+    if owns_data:
+        with open(mdl_path, "rb") as f:
+            data = bytearray(f.read())
+    if len(data) < 192:
+        return (False, data) if not owns_data else False
+    numbones, _boneindex = struct.unpack_from("<ii", data, 156)
+    numlocalseq, localseqindex = struct.unpack_from("<ii", data, 188)
+    REC = 212
+    changed = False
+    for i in range(max(0, numlocalseq)):
+        entry = localseqindex + i * REC
+        if entry + REC > len(data):
+            break
+        ikrule_count, = struct.unpack_from("<I", data, entry + 144)
+        if ikrule_count:
+            struct.pack_into("<I", data, entry + 144, 0)
+            changed = True
+
+        weight_offset, = struct.unpack_from("<I", data, entry + 156)
+        ik_lock_count, = struct.unpack_from("<I", data, entry + 164)
+        if ik_lock_count:
+            struct.pack_into("<I", data, entry + 164, 0)
+            changed = True
+
+        root_driver_bone_index, = struct.unpack_from("<I", data, entry + 200)
+        if 0 <= root_driver_bone_index < numbones and perm.get(root_driver_bone_index, root_driver_bone_index) != root_driver_bone_index:
+            struct.pack_into("<I", data, entry + 200, perm[root_driver_bone_index])
+            changed = True
+
+        if weight_offset and numbones > 0:
+            weights_abs = entry + weight_offset
+            if weights_abs + numbones * 4 <= len(data):
+                old_weights = struct.unpack_from(f"<{numbones}f", data, weights_abs)
+                new_weights = list(old_weights)
+                reordered = False
+                for old_i, w in enumerate(old_weights):
+                    new_i = perm.get(old_i, old_i)
+                    if new_weights[new_i] != w:
+                        new_weights[new_i] = w
+                        reordered = True
+                if reordered:
+                    struct.pack_into(f"<{numbones}f", data, weights_abs, *new_weights)
+                    changed = True
+
+    if owns_data:
+        if changed:
+            with open(mdl_path, "wb") as f:
+                f.write(data)
+        return changed
+    return changed, data
+
+
+def align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_reference_phy):
+    """Top-level entry point: compute the permutation that puts every
+    physics-simulated bone at the same table index stock uses, then apply it
+    to the .mdl and every paired .vvd/.vtx in lockstep. Safe to call on every
+    enable() -- returns False (no-op) once a pack is already aligned.
+
+    2026-07-08: also neuters IK rules (per-animation and per-sequence) and
+    fixes up sequence-level bone references (root_driver_bone_index, the
+    per-bone weight array) -- the first version of this function shipped
+    without these and broke live playermodel animation, since IK corrections
+    kept firing against bones that had moved. See patch_mdl_neuter_*/
+    patch_mdl_permute_sequences docstrings for why IK rules are neutered
+    rather than remapped."""
+    perm = compute_bone_permutation(copied_mdl, target_reference_mdl, target_reference_phy)
+    if not perm:
+        return False
+    changed = patch_mdl_permute_bones(copied_mdl, perm)
+    if not changed:
+        return False
+    with open(copied_mdl, "rb") as f:
+        data = bytearray(f.read())
+    _, data = patch_mdl_neuter_animdesc_ikrules(copied_mdl, data=data)
+    changed_seq, data = patch_mdl_permute_sequences(copied_mdl, perm, data=data)
+    with open(copied_mdl, "wb") as f:
+        f.write(data)
+    base = copied_mdl[:-4] if copied_mdl.lower().endswith(".mdl") else copied_mdl
+    vvd_path = base + ".vvd"
+    if os.path.exists(vvd_path):
+        patch_vvd_permute_bones(vvd_path, perm)
+    for vtx_path in vtx_paths_for_mdl(copied_mdl):
+        patch_vtx_permute_bones(vtx_path, perm)
+    return True
+
+
+def parse_mdl_bones(path):
+    """Return {bone_name: {"index": i, "parent": parent_index}} for a compiled .mdl."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if len(data) < 164:
+        return {}
+    try:
+        numbones, boneindex = struct.unpack_from("<ii", data, 156)
+    except struct.error:
+        return {}
+    bones = {}
+    order = []
+    for i in range(max(0, numbones)):
+        offset = boneindex + i * 216
+        if offset + 216 > len(data):
+            break
+        sznameindex, parent = struct.unpack_from("<ii", data, offset)
+        name = read_c_string(data, offset + sznameindex)
+        bones[name] = {"index": i, "parent": parent}
+        order.append(name)
+    bones["__order__"] = order
+    return bones
+
+
+def parse_mdl_attachments(path):
+    """Return the list of mstudioattachment_t entries (name, flags, localbone index,
+    12-float local matrix) for a compiled .mdl."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if len(data) < 244:
+        return []
+    try:
+        numattach, attachindex = struct.unpack_from("<ii", data, 240)
+    except struct.error:
+        return []
+    REC = 92
+    out = []
+    for i in range(max(0, numattach)):
+        offset = attachindex + i * REC
+        if offset + REC > len(data):
+            break
+        sznameindex, flags, localbone = struct.unpack_from("<iii", data, offset)
+        mat = struct.unpack_from("<12f", data, offset + 12)
+        out.append({
+            "name": read_c_string(data, offset + sznameindex),
+            "flags": flags,
+            "localbone": localbone,
+            "mat": mat,
+        })
+    return out
+
+
+# A handful of attachment names live on a dedicated helper bone in Valve's own
+# rig (e.g. a weapon held in the right hand is parented to a bone literally
+# called "ValveBiped.Anim_Attachment_RH", not directly to the hand). Override
+# donor meshes almost never carry that helper bone, so when it's missing we
+# fall back to the nearest sensible real bone instead of dropping the
+# attachment entirely.
+ATTACHMENT_BONE_FALLBACKS = {
+    "ValveBiped.Anim_Attachment_RH": "ValveBiped.Bip01_R_Hand",
+    "ValveBiped.Anim_Attachment_LH": "ValveBiped.Bip01_L_Hand",
+}
+
+
+def resolve_attachment_bone(bone_name, override_bones, stock_bones):
+    """Find the best available bone in the override's own skeleton to carry an
+    attachment whose stock target bone is `bone_name`. Tries (in order): the
+    exact name, a known fallback (e.g. the LH/RH helper bones -> the hand),
+    then walks up the STOCK bone hierarchy toward the root until an ancestor
+    name is also present in the override skeleton. Returns a bone name or None
+    if nothing in the chain exists on the override at all (e.g. no skeleton)."""
+    if bone_name in override_bones:
+        return bone_name
+    fallback = ATTACHMENT_BONE_FALLBACKS.get(bone_name)
+    if fallback and fallback in override_bones:
+        return fallback
+    seen = set()
+    current = bone_name
+    while current in stock_bones and current not in seen:
+        seen.add(current)
+        parent_idx = stock_bones[current]["parent"]
+        if parent_idx < 0:
+            break
+        order = stock_bones.get("__order__") or []
+        if parent_idx >= len(order):
+            break
+        current = order[parent_idx]
+        if current in override_bones:
+            return current
+    return None
+
+
+def patch_mdl_add_missing_attachments(copied_mdl, target_reference_mdl):
+    """Append any attachment (mstudioattachment_t) that exists on the native/stock
+    model but is missing from an override's compiled .mdl. Attachments are pure
+    metadata (a name + parent bone + local offset) -- they aren't referenced by
+    vertex weights, animations, or physics, so this is a safe, purely additive
+    append, same spirit as patch_mdl_relocate_bodygroups but far simpler: no
+    paired .vtx/.vvd/.phy changes are needed.
+
+    Why this matters: the DRO gamemode's knockdown/stun camera code does
+    ent:LookupAttachment('eyes') on the ragdoll and silently gives up if it
+    comes back invalid -- which is exactly what happens when an override's
+    donor mesh was compiled without that attachment at all. Returns True if
+    anything was appended."""
+    stock_attachments = parse_mdl_attachments(target_reference_mdl)
+    if not stock_attachments:
+        return False
+    stock_bones = parse_mdl_bones(target_reference_mdl)
+
+    with open(copied_mdl, "rb") as f:
+        data = bytearray(f.read())
+    if len(data) < 244:
+        return False
+
+    override_bones = parse_mdl_bones(copied_mdl)
+    existing = parse_mdl_attachments(copied_mdl)
+    existing_names = {a["name"] for a in existing}
+    old_numattach, old_attachindex = struct.unpack_from("<ii", data, 240)
+
+    to_add = []
+    for stock_attach in stock_attachments:
+        name = stock_attach["name"]
+        if name in existing_names:
+            continue
+        stock_bone_name = (stock_bones.get("__order__") or [None] * (stock_attach["localbone"] + 1))[stock_attach["localbone"]] \
+            if 0 <= stock_attach["localbone"] < len(stock_bones.get("__order__") or []) else None
+        if not stock_bone_name:
+            continue
+        resolved_bone = resolve_attachment_bone(stock_bone_name, override_bones, stock_bones)
+        if not resolved_bone:
+            continue
+        to_add.append((name, override_bones[resolved_bone]["index"], stock_attach["mat"]))
+
+    if not to_add:
+        return False
+
+    REC = 92
+
+    def append_name(name):
+        out = len(data)
+        data.extend(name.encode("utf-8") + b"\0")
+        return out
+
+    new_count = old_numattach + len(to_add)
+    new_table = len(data)
+    data.extend(b"\0" * (new_count * REC))
+
+    for i, a in enumerate(existing):
+        dest = new_table + i * REC
+        name_abs = append_name(a["name"])
+        struct.pack_into("<iii", data, dest, name_abs - dest, a["flags"], a["localbone"])
+        struct.pack_into("<12f", data, dest + 12, *a["mat"])
+
+    for j, (name, bone_idx, mat) in enumerate(to_add):
+        dest = new_table + (old_numattach + j) * REC
+        name_abs = append_name(name)
+        struct.pack_into("<iii", data, dest, name_abs - dest, 0, bone_idx)
+        struct.pack_into("<12f", data, dest + 12, *mat)
+
+    struct.pack_into("<ii", data, 240, new_count, new_table)
+    struct.pack_into("<i", data, 76, len(data))
+
+    with open(copied_mdl, "wb") as f:
+        f.write(data)
+    return True
+
+
 def patch_retargeted_model_bodygroup_names(dest_folder, pack, target, source):
     copied_mdl = mdl_path_from_base(dest_folder, target.get("model_base", ""))
     target_reference_mdl = find_known_target_mdl(target)
     source_mdl = mdl_path_from_base(pack["folder"], source.get("model_base", ""))
     if not (os.path.exists(copied_mdl) and os.path.exists(target_reference_mdl) and os.path.exists(source_mdl)):
         return False
+    changed_attach = patch_mdl_add_missing_attachments(copied_mdl, target_reference_mdl)
     override_groups = parse_mdl_bodygroups(source_mdl)
     target_groups = parse_mdl_bodygroups(target_reference_mdl)
-    return relocate_unreachable_bodygroups(copied_mdl, override_groups, target_groups)
+    changed_bodygroups = relocate_unreachable_bodygroups(copied_mdl, override_groups, target_groups)
+    # align_ragdoll_bones_to_stock is DISABLED here (2026-07-08): v2 (IK-neutered)
+    # still broke George Droyd's live playermodel in-game despite passing every
+    # offline check (bone alignment, vvd/vtx exhaustive diff, IK rules zeroed,
+    # HLMV load). There is at least one more bone-referencing structure this
+    # isn't accounting for (candidates: mstudiobonecontroller_t.bone, the
+    # optional "linear bone" table used by some compiles for animation decomp,
+    # mstudiolocalhierarchy_t, mstudioeyeball_t.bone -- none checked yet). Do
+    # not re-enable until the actual mechanism is found and verified in-game,
+    # not just offline.
+    changed_bones = False
+    return changed_bodygroups or changed_attach or changed_bones
 
 
 def vtx_paths_for_mdl(mdl_path):
@@ -1155,9 +1736,21 @@ def patch_default_model_bodygroup_names(dest_folder, pack, source):
     source_mdl = mdl_path_from_base(pack["folder"], source.get("model_base", ""))
     if not (os.path.exists(copied_mdl) and os.path.exists(target_reference_mdl) and os.path.exists(source_mdl)):
         return False
+    changed_attach = patch_mdl_add_missing_attachments(copied_mdl, target_reference_mdl)
     override_groups = parse_mdl_bodygroups(source_mdl)
     target_groups = parse_mdl_bodygroups(target_reference_mdl)
-    return relocate_unreachable_bodygroups(copied_mdl, override_groups, target_groups)
+    changed_bodygroups = relocate_unreachable_bodygroups(copied_mdl, override_groups, target_groups)
+    # align_ragdoll_bones_to_stock is DISABLED here (2026-07-08): v2 (IK-neutered)
+    # still broke George Droyd's live playermodel in-game despite passing every
+    # offline check (bone alignment, vvd/vtx exhaustive diff, IK rules zeroed,
+    # HLMV load). There is at least one more bone-referencing structure this
+    # isn't accounting for (candidates: mstudiobonecontroller_t.bone, the
+    # optional "linear bone" table used by some compiles for animation decomp,
+    # mstudiolocalhierarchy_t, mstudioeyeball_t.bone -- none checked yet). Do
+    # not re-enable until the actual mechanism is found and verified in-game,
+    # not just offline.
+    changed_bones = False
+    return changed_bodygroups or changed_attach or changed_bones
 
 
 def read_source_target_from_json(folder):
