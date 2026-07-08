@@ -53,7 +53,7 @@ OLD_COMMUNITY_INDEX_URLS = {
 # Cloud presence backend (Cloudflare Worker - see presence_worker.js). Baked in so
 # all app users share it with zero config. Empty string = cloud presence disabled.
 DEFAULT_PRESENCE_URL = ""
-APP_VERSION = "1.23"
+APP_VERSION = "1.24"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -1395,16 +1395,26 @@ def patch_vtx_permute_bones(vtx_path, perm):
 
 def patch_mdl_neuter_animdesc_ikrules(mdl_path, data=None):
     """IK rules (mstudioikrule_t, referenced per-animation via ikrule_count/
-    ikrule_offset) apply real-time foot/hand placement corrections and
-    reference bones directly -- but unlike bones/attachments/vvd/vtx, their
-    binary layout isn't available from SourceIO's own parser to verify
-    against, so remapping them blind carries real risk (this is what actually
-    broke live playermodels the first time this was attempted, 2026-07-07).
-    Rather than guess, this zeroes ikrule_count on any local animation that
-    has one -- the rule data becomes unreferenced/inert instead of pointing at
-    a wrong bone. Small cosmetic cost (loses fine foot/hand IK correction on
-    those specific animations), no correctness risk. Returns (changed, data)
-    if a bytearray was passed in for chaining, else writes the file directly."""
+    ikrule_offset at record+60) apply real-time foot/hand placement
+    corrections and reference bones directly -- but unlike
+    bones/attachments/vvd/vtx, their binary layout isn't available from
+    SourceIO's own parser to verify against, so remapping them blind carries
+    real risk (this is what actually broke live playermodels the first time
+    this was attempted, 2026-07-07). Rather than guess, this zeroes
+    ikrule_count on any local animation that has one -- the rule data becomes
+    unreferenced/inert instead of pointing at a wrong bone.
+
+    Also zeroes local_hierarchy_count (record+72, verified against the same
+    mstudioanimdesc_t format string SourceIO uses -- 'iIf4I15I2HIf', which
+    also cross-validates the existing ikrule_count offset of 60 and the 100-
+    byte record size). mstudiolocalhierarchy_t entries constrain one bone's
+    position relative to another by direct bone index, same hazard class as
+    IK rules, same fix.
+
+    Small cosmetic cost (loses fine foot/hand IK correction and any
+    bone-follow constraints on those specific animations), no correctness
+    risk. Returns (changed, data) if a bytearray was passed in for chaining,
+    else writes the file directly."""
     owns_data = data is None
     if owns_data:
         with open(mdl_path, "rb") as f:
@@ -1416,11 +1426,15 @@ def patch_mdl_neuter_animdesc_ikrules(mdl_path, data=None):
     changed = False
     for i in range(max(0, numlocalanim)):
         entry = localanimindex + i * REC
-        if entry + 64 > len(data):
+        if entry + 76 > len(data):
             break
         ikrule_count, = struct.unpack_from("<I", data, entry + 60)
         if ikrule_count:
             struct.pack_into("<I", data, entry + 60, 0)
+            changed = True
+        local_hierarchy_count, = struct.unpack_from("<I", data, entry + 72)
+        if local_hierarchy_count:
+            struct.pack_into("<I", data, entry + 72, 0)
             changed = True
     if owns_data:
         if changed:
@@ -1494,6 +1508,116 @@ def patch_mdl_permute_sequences(mdl_path, perm, data=None):
     return changed, data
 
 
+def patch_mdl_neuter_ik_chains(mdl_path, data=None):
+    """IK chains (mstudioikchain_t, one per limb -- e.g. 4 for a biped: two feet,
+    two hands -- referenced by ik_chain_count/ik_chain_offset in the header)
+    describe a kinematic chain used to solve real-time IK, with each link
+    carrying a direct bone index. Confirmed present and populated (count == 4)
+    in every donor and stock file checked, including ones already put through
+    the ikrule-neutering pass -- meaning something still consults this table
+    independent of the (already-zeroed) per-animation/per-sequence ikrule
+    data, which is the leading suspect for George Droyd's live playermodel
+    still breaking after that first fix. SourceIO has no parser for the
+    per-link struct layout, so -- same reasoning as the animdesc/seqdesc IK
+    rules -- this is neutered (chain count zeroed) rather than remapped
+    blind. Small cosmetic cost (loses foot/hand IK snapping), no correctness
+    risk."""
+    owns_data = data is None
+    if owns_data:
+        with open(mdl_path, "rb") as f:
+            data = bytearray(f.read())
+    if len(data) < 292:
+        return (False, data) if not owns_data else False
+    ik_chain_count, = struct.unpack_from("<I", data, 284)
+    changed = False
+    if ik_chain_count:
+        struct.pack_into("<I", data, 284, 0)
+        changed = True
+    if owns_data:
+        if changed:
+            with open(mdl_path, "wb") as f:
+                f.write(data)
+        return changed
+    return changed, data
+
+
+def patch_mdl_neuter_linear_bone(mdl_path, data=None):
+    """The optional 'linear bone' table (linear_bone_offset in the header) is a
+    flat, position-indexed cache of the same per-bone position/rotation/parent
+    data already in the main bone table -- confirmed present (nonzero offset)
+    in every file checked. SourceIO doesn't parse its internal layout, so like
+    IK chains this is neutered rather than reordered: zeroing the offset makes
+    it absent, forcing the engine to fall back to the main bone table, which
+    patch_mdl_permute_bones already keeps correct."""
+    owns_data = data is None
+    if owns_data:
+        with open(mdl_path, "rb") as f:
+            data = bytearray(f.read())
+    if len(data) < 428:
+        return (False, data) if not owns_data else False
+    linear_bone_offset, = struct.unpack_from("<I", data, 424)
+    changed = False
+    if linear_bone_offset:
+        struct.pack_into("<I", data, 424, 0)
+        changed = True
+    if owns_data:
+        if changed:
+            with open(mdl_path, "wb") as f:
+                f.write(data)
+        return changed
+    return changed, data
+
+
+def patch_mdl_remap_eyeball_bones(mdl_path, perm, data=None):
+    """mstudioeyeball_t.bone_index (a direct bone reference, verified against
+    SourceIO's own eyeball.py struct parser) lives nested three levels deep:
+    header's bodyparts -> each bodypart's models -> each model's own eyeballs
+    -- unlike the flat global attachment table, this needs its own walk.
+    Record size is version-gated the same way SourceIO's parser is (172 bytes
+    for version>=44 and !=2531, which covers every file seen so far in this
+    codebase; 140 bytes otherwise). No donor pack has shipped with eyeballs
+    yet (all checked so far have eyeball_count==0), but this makes future
+    packs that do carry animated eyes safe automatically instead of silently
+    left broken."""
+    owns_data = data is None
+    if owns_data:
+        with open(mdl_path, "rb") as f:
+            data = bytearray(f.read())
+    if len(data) < 244:
+        return (False, data) if not owns_data else False
+    version, = struct.unpack_from("<i", data, 4)
+    eyeball_rec = 172 if (version >= 44 and version != 2531) else 140
+    numbodyparts, bodypartindex = struct.unpack_from("<ii", data, 232)
+    changed = False
+    for bp in range(max(0, numbodyparts)):
+        bp_off = bodypartindex + bp * 16
+        if bp_off + 16 > len(data):
+            break
+        _sz, nummodels, _base, modelindex = struct.unpack_from("<iiii", data, bp_off)
+        model_table_abs = bp_off + modelindex
+        for m in range(max(0, nummodels)):
+            model_off = model_table_abs + m * 148
+            if model_off + 108 > len(data):
+                break
+            eyeball_count, eyeball_offset = struct.unpack_from("<ii", data, model_off + 100)
+            eyeball_table_abs = model_off + eyeball_offset
+            for e in range(max(0, eyeball_count)):
+                rec_off = eyeball_table_abs + e * eyeball_rec
+                if rec_off + 8 > len(data):
+                    break
+                bone_index, = struct.unpack_from("<I", data, rec_off + 4)
+                new_index = perm.get(bone_index, bone_index)
+                if new_index != bone_index:
+                    struct.pack_into("<I", data, rec_off + 4, new_index)
+                    changed = True
+    if owns_data:
+        if changed:
+            with open(mdl_path, "wb") as f:
+                f.write(data)
+        return changed
+    return changed, data
+
+
 def align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_reference_phy):
     """Top-level entry point: compute the permutation that puts every
     physics-simulated bone at the same table index stock uses, then apply it
@@ -1506,7 +1630,18 @@ def align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_refere
     without these and broke live playermodel animation, since IK corrections
     kept firing against bones that had moved. See patch_mdl_neuter_*/
     patch_mdl_permute_sequences docstrings for why IK rules are neutered
-    rather than remapped."""
+    rather than remapped.
+
+    2026-07-08 (v3): that fix still wasn't enough -- George Droyd's live
+    playermodel broke again despite every offline check passing. Root cause
+    traced to two more bone-index structures the v2 pass never touched: IK
+    chains (ik_chain_count/offset, populated in every real file checked) and
+    the linear bone cache (linear_bone_offset, also populated everywhere).
+    Both are now neutered the same way IK rules are, plus eyeball bone
+    references (mstudioeyeball_t.bone_index) are properly remapped since that
+    struct's layout IS verified against SourceIO. See
+    patch_mdl_neuter_ik_chains / patch_mdl_neuter_linear_bone /
+    patch_mdl_remap_eyeball_bones docstrings."""
     perm = compute_bone_permutation(copied_mdl, target_reference_mdl, target_reference_phy)
     if not perm:
         return False
@@ -1516,7 +1651,10 @@ def align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_refere
     with open(copied_mdl, "rb") as f:
         data = bytearray(f.read())
     _, data = patch_mdl_neuter_animdesc_ikrules(copied_mdl, data=data)
-    changed_seq, data = patch_mdl_permute_sequences(copied_mdl, perm, data=data)
+    _, data = patch_mdl_permute_sequences(copied_mdl, perm, data=data)
+    _, data = patch_mdl_neuter_ik_chains(copied_mdl, data=data)
+    _, data = patch_mdl_neuter_linear_bone(copied_mdl, data=data)
+    _, data = patch_mdl_remap_eyeball_bones(copied_mdl, perm, data=data)
     with open(copied_mdl, "wb") as f:
         f.write(data)
     base = copied_mdl[:-4] if copied_mdl.lower().endswith(".mdl") else copied_mdl
@@ -1706,16 +1844,14 @@ def patch_retargeted_model_bodygroup_names(dest_folder, pack, target, source):
     override_groups = parse_mdl_bodygroups(source_mdl)
     target_groups = parse_mdl_bodygroups(target_reference_mdl)
     changed_bodygroups = relocate_unreachable_bodygroups(copied_mdl, override_groups, target_groups)
-    # align_ragdoll_bones_to_stock is DISABLED here (2026-07-08): v2 (IK-neutered)
-    # still broke George Droyd's live playermodel in-game despite passing every
-    # offline check (bone alignment, vvd/vtx exhaustive diff, IK rules zeroed,
-    # HLMV load). There is at least one more bone-referencing structure this
-    # isn't accounting for (candidates: mstudiobonecontroller_t.bone, the
-    # optional "linear bone" table used by some compiles for animation decomp,
-    # mstudiolocalhierarchy_t, mstudioeyeball_t.bone -- none checked yet). Do
-    # not re-enable until the actual mechanism is found and verified in-game,
-    # not just offline.
-    changed_bones = False
+    # v3 (2026-07-08): re-enabled after finding and neutering the two
+    # remaining bone-index structures (IK chains, linear bone cache) that the
+    # v2 pass missed -- see align_ragdoll_bones_to_stock's docstring. Still
+    # needs in-game confirmation on a pack that broke before (George Droyd)
+    # before this is trusted as settled.
+    target_reference_phy = target_reference_mdl[:-4] + ".phy" if target_reference_mdl.lower().endswith(".mdl") else ""
+    changed_bones = align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_reference_phy) \
+        if os.path.exists(target_reference_phy) else False
     return changed_bodygroups or changed_attach or changed_bones
 
 
@@ -1740,16 +1876,12 @@ def patch_default_model_bodygroup_names(dest_folder, pack, source):
     override_groups = parse_mdl_bodygroups(source_mdl)
     target_groups = parse_mdl_bodygroups(target_reference_mdl)
     changed_bodygroups = relocate_unreachable_bodygroups(copied_mdl, override_groups, target_groups)
-    # align_ragdoll_bones_to_stock is DISABLED here (2026-07-08): v2 (IK-neutered)
-    # still broke George Droyd's live playermodel in-game despite passing every
-    # offline check (bone alignment, vvd/vtx exhaustive diff, IK rules zeroed,
-    # HLMV load). There is at least one more bone-referencing structure this
-    # isn't accounting for (candidates: mstudiobonecontroller_t.bone, the
-    # optional "linear bone" table used by some compiles for animation decomp,
-    # mstudiolocalhierarchy_t, mstudioeyeball_t.bone -- none checked yet). Do
-    # not re-enable until the actual mechanism is found and verified in-game,
-    # not just offline.
-    changed_bones = False
+    # v3 (2026-07-08): re-enabled, see the matching comment in
+    # patch_retargeted_model_bodygroup_names and align_ragdoll_bones_to_stock's
+    # docstring.
+    target_reference_phy = target_reference_mdl[:-4] + ".phy" if target_reference_mdl.lower().endswith(".mdl") else ""
+    changed_bones = align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_reference_phy) \
+        if os.path.exists(target_reference_phy) else False
     return changed_bodygroups or changed_attach or changed_bones
 
 
