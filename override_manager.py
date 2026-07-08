@@ -53,7 +53,7 @@ OLD_COMMUNITY_INDEX_URLS = {
 # Cloud presence backend (Cloudflare Worker - see presence_worker.js). Baked in so
 # all app users share it with zero config. Empty string = cloud presence disabled.
 DEFAULT_PRESENCE_URL = ""
-APP_VERSION = "1.25"
+APP_VERSION = "1.26"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -1618,6 +1618,77 @@ def patch_mdl_remap_eyeball_bones(mdl_path, perm, data=None):
     return changed, data
 
 
+def patch_mdl_remap_anim_tracks(mdl_path, perm, data=None):
+    """The ACTUAL cause of the 2026-07-08 live playermodel corruption (clothes/
+    arms visibly stretched during normal walking on Shiroko, confirmed present
+    on every local animation checked so far): compressed per-bone animation
+    data, for any local animation NOT using the FRAMEANIM flag (0x0040 in the
+    animdesc flags field -- every local animation seen in every real file
+    checked so far uses the classic, non-FRAMEANIM format), is a linked list
+    of variable-length mstudioanim_t records, one per animated bone, chained
+    via a self-relative int16 next_offset at record+2 (0 = end of chain).
+    Verified byte-for-byte against SourceIO's own local_animation.py
+    (_read_mdl_animations): each record starts with an explicit bone_index
+    byte at record+0 (255 is an end-of-chain sentinel, not a real bone), then
+    a flags byte at record+1, then rotation/position RLE value streams with
+    their own self-relative sub-offsets. bone_index is the only bone
+    reference in the record -- remapped here via perm. The value streams
+    after it are animation curve DATA, not bone references, and are left
+    completely untouched.
+
+    Every single prior pass in this fix (bone table, vvd, vtx, attachments,
+    eyeballs, IK rules/chains, local hierarchy, jigglebone proc_offset) left
+    this structure unpatched, so every animated frame kept applying the wrong
+    bone's motion curve to the newly-permuted bone slots -- explaining why
+    corruption showed up constantly during normal gameplay (every animated
+    frame) rather than only at the moment of death like every previously
+    fixed structure.
+
+    Only handles local (animblock_id == 0), non-FRAMEANIM animations -- the
+    same scope every other animdesc-level fix in this codebase already
+    assumes, matching every real file checked so far."""
+    owns_data = data is None
+    if owns_data:
+        with open(mdl_path, "rb") as f:
+            data = bytearray(f.read())
+    if len(data) < 184:
+        return (False, data) if not owns_data else False
+    numlocalanim, localanimindex = struct.unpack_from("<ii", data, 180)
+    REC = 100
+    changed = False
+    for i in range(max(0, numlocalanim)):
+        entry = localanimindex + i * REC
+        if entry + 60 > len(data):
+            break
+        flags, = struct.unpack_from("<I", data, entry + 12)
+        if flags & 0x0040:  # FRAMEANIM -- positional format, not handled here
+            continue
+        animblock_id, animblock_offset = struct.unpack_from("<ii", data, entry + 52)
+        if animblock_id != 0 or animblock_offset == 0:
+            continue
+        record_start = entry + animblock_offset
+        guard = 0
+        while record_start + 4 <= len(data) and guard < 4096:
+            guard += 1
+            bone_index = data[record_start]
+            if bone_index == 255:
+                break
+            new_index = perm.get(bone_index, bone_index)
+            if new_index != bone_index:
+                data[record_start] = new_index
+                changed = True
+            next_offset, = struct.unpack_from("<h", data, record_start + 2)
+            if next_offset <= 0:
+                break
+            record_start = record_start + next_offset
+    if owns_data:
+        if changed:
+            with open(mdl_path, "wb") as f:
+                f.write(data)
+        return changed
+    return changed, data
+
+
 def align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_reference_phy):
     """Top-level entry point: compute the permutation that puts every
     physics-simulated bone at the same table index stock uses, then apply it
@@ -1641,7 +1712,24 @@ def align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_refere
     references (mstudioeyeball_t.bone_index) are properly remapped since that
     struct's layout IS verified against SourceIO. See
     patch_mdl_neuter_ik_chains / patch_mdl_neuter_linear_bone /
-    patch_mdl_remap_eyeball_bones docstrings."""
+    patch_mdl_remap_eyeball_bones docstrings.
+
+    2026-07-08 (v1.25, wrong turn): disabling linear_bone neutering (to test
+    whether it was the cause of Shiroko's playermodel corruption) made the
+    corruption WORSE, not better -- leaving linear_bone_offset populated with
+    STALE data (compiled against the donor's original, un-permuted bone
+    order) is actively worse than making it absent. linear_bone neutering is
+    correct and stays on.
+
+    2026-07-08 (v4, actual root cause): the real cause of the playermodel
+    corruption was never touched at all until now -- compressed per-bone
+    animation track data (mstudioanim_t, the classic linked-list format used
+    by every local animation seen in every real file) tags each track with
+    its OWN bone_index byte, completely separate from every structure fixed
+    so far. Every animated frame was applying the wrong bone's motion curve
+    to the newly-permuted bone slots, which is why it broke constantly during
+    normal gameplay rather than only at death like every previously-fixed
+    structure. See patch_mdl_remap_anim_tracks docstring."""
     perm = compute_bone_permutation(copied_mdl, target_reference_mdl, target_reference_phy)
     if not perm:
         return False
@@ -1653,21 +1741,8 @@ def align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_refere
     _, data = patch_mdl_neuter_animdesc_ikrules(copied_mdl, data=data)
     _, data = patch_mdl_permute_sequences(copied_mdl, perm, data=data)
     _, data = patch_mdl_neuter_ik_chains(copied_mdl, data=data)
-    # patch_mdl_neuter_linear_bone is DISABLED here (2026-07-08, v1.25): broke
-    # Shiroko's live playermodel (clothes/arms stretched) the first time v3
-    # shipped with it on, on the first real jiggle-bone-heavy retargeted pack
-    # tested (George Droyd, the only pack tested before this, has zero
-    # jigglebones and is a same-character/no-retarget install -- much simpler
-    # than Shiroko's char10->char8 cross-character retarget). Bone table,
-    # vvd/vtx, and jigglebone proc_offset relocation were all re-verified
-    # byte-exact for this exact Shiroko/Celestia pairing and are NOT the
-    # cause. ik_chain neutering is kept (it's what fixed George Droyd, has a
-    # well-understood real-time bone-manipulation mechanism, and George
-    # Droyd's playermodel was confirmed fine with it on). linear_bone is the
-    # one piece with no SourceIO-verified struct layout at all -- prime
-    # suspect, being tested in isolation now. Do not re-enable until this
-    # variant confirms both Shiroko AND George Droyd are clean.
-    # _, data = patch_mdl_neuter_linear_bone(copied_mdl, data=data)
+    _, data = patch_mdl_neuter_linear_bone(copied_mdl, data=data)
+    _, data = patch_mdl_remap_anim_tracks(copied_mdl, perm, data=data)
     _, data = patch_mdl_remap_eyeball_bones(copied_mdl, perm, data=data)
     with open(copied_mdl, "wb") as f:
         f.write(data)
