@@ -53,7 +53,7 @@ OLD_COMMUNITY_INDEX_URLS = {
 # Cloud presence backend (Cloudflare Worker - see presence_worker.js). Baked in so
 # all app users share it with zero config. Empty string = cloud presence disabled.
 DEFAULT_PRESENCE_URL = ""
-APP_VERSION = "1.24"
+APP_VERSION = "1.25"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -1653,7 +1653,21 @@ def align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_refere
     _, data = patch_mdl_neuter_animdesc_ikrules(copied_mdl, data=data)
     _, data = patch_mdl_permute_sequences(copied_mdl, perm, data=data)
     _, data = patch_mdl_neuter_ik_chains(copied_mdl, data=data)
-    _, data = patch_mdl_neuter_linear_bone(copied_mdl, data=data)
+    # patch_mdl_neuter_linear_bone is DISABLED here (2026-07-08, v1.25): broke
+    # Shiroko's live playermodel (clothes/arms stretched) the first time v3
+    # shipped with it on, on the first real jiggle-bone-heavy retargeted pack
+    # tested (George Droyd, the only pack tested before this, has zero
+    # jigglebones and is a same-character/no-retarget install -- much simpler
+    # than Shiroko's char10->char8 cross-character retarget). Bone table,
+    # vvd/vtx, and jigglebone proc_offset relocation were all re-verified
+    # byte-exact for this exact Shiroko/Celestia pairing and are NOT the
+    # cause. ik_chain neutering is kept (it's what fixed George Droyd, has a
+    # well-understood real-time bone-manipulation mechanism, and George
+    # Droyd's playermodel was confirmed fine with it on). linear_bone is the
+    # one piece with no SourceIO-verified struct layout at all -- prime
+    # suspect, being tested in isolation now. Do not re-enable until this
+    # variant confirms both Shiroko AND George Droyd are clean.
+    # _, data = patch_mdl_neuter_linear_bone(copied_mdl, data=data)
     _, data = patch_mdl_remap_eyeball_bones(copied_mdl, perm, data=data)
     with open(copied_mdl, "wb") as f:
         f.write(data)
