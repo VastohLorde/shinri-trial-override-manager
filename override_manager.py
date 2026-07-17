@@ -53,7 +53,7 @@ OLD_COMMUNITY_INDEX_URLS = {
 # Cloud presence backend (Cloudflare Worker - see presence_worker.js). Baked in so
 # all app users share it with zero config. Empty string = cloud presence disabled.
 DEFAULT_PRESENCE_URL = ""
-APP_VERSION = "1.26"
+APP_VERSION = "1.24"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -1987,6 +1987,7 @@ def read_source_target_from_json(folder):
     if not isinstance(source, dict):
         return None
     return {
+        "name": str(source.get("name") or "").strip(),
         "model_base": safe_game_path(source.get("model_base", ""), allow_empty=True, strip_ext=True),
         "arms_base": safe_game_path(source.get("arms_base", ""), allow_empty=True, strip_ext=True),
         "sprite_dir": safe_game_path(source.get("sprite_dir", ""), allow_empty=True),
@@ -2173,6 +2174,22 @@ def copy_material_root(material_root, output_dir):
     return True
 
 
+def copy_pack_extras(src_folder, output_dir):
+    if not src_folder or not os.path.isdir(src_folder):
+        return
+    skip = {"models", "materials", "__pycache__"}
+    for name in os.listdir(src_folder):
+        if name in skip or name.lower() == "override.json":
+            continue
+        src = os.path.join(src_folder, name)
+        dest = os.path.join(output_dir, name)
+        if os.path.isdir(src):
+            shutil.copytree(src, dest, dirs_exist_ok=True)
+        elif os.path.isfile(src):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copy2(src, dest)
+
+
 def validate_sprite_assignment(path):
     if not os.path.isfile(path):
         raise ValueError(f"Selected sprite file does not exist: {path}")
@@ -2201,6 +2218,132 @@ def copy_sprite_assignments(assignments, sprite_dir, output_dir):
     return copied
 
 
+def read_override_json(folder):
+    path = os.path.join(folder, "override.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def pack_file_from_base(folder, model_base, ext=".mdl"):
+    rel = path_without_ext(normalize_game_path(model_base))
+    if not rel:
+        return ""
+    path = os.path.join(folder, *(rel + ext).split("/"))
+    return path if os.path.isfile(path) else ""
+
+
+def sprite_slot_index_for_filename(group, filename):
+    stem, ext = os.path.splitext(str(filename or "").lower())
+    if ext not in (".vtf", ".vmt"):
+        return None
+    first = group.get("first")
+    if first and stem == os.path.splitext(first.lower())[0]:
+        return 1
+    prefix = (group.get("prefix") or "").lower() + "_"
+    if stem.startswith(prefix):
+        suffix = stem[len(prefix):]
+        if suffix.isdigit():
+            return int(suffix)
+    return None
+
+
+def collect_pack_sprite_assignments(folder, sprite_dir):
+    sprite_dir = normalize_game_path(sprite_dir)
+    if not folder or not sprite_dir:
+        return {}
+    root = os.path.join(folder, *sprite_dir.split("/"))
+    if not os.path.isdir(root):
+        return {}
+    out = {}
+    priority = {".vtf": 0, ".vmt": 1}
+    for filename in sorted(os.listdir(root)):
+        path = os.path.join(root, filename)
+        if not os.path.isfile(path):
+            continue
+        ext = os.path.splitext(filename.lower())[1]
+        if ext not in priority:
+            continue
+        for group in SPRITE_GROUPS:
+            index = sprite_slot_index_for_filename(group, filename)
+            if not index:
+                continue
+            key = (group["name"], index)
+            old = out.get(key)
+            if not old or priority[ext] < priority[os.path.splitext(old["filename"].lower())[1]]:
+                out[key] = {"path": path, "filename": filename}
+            break
+    return out
+
+
+def require_overrides_child(folder):
+    full = os.path.abspath(folder)
+    root = os.path.abspath(OVERRIDES_DIR)
+    if full == root or os.path.commonpath([root, full]) != root:
+        raise ValueError("Override folder path is outside the overrides folder.")
+    return full
+
+
+def unique_backup_folder(path, label="edit"):
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    base = f"{path}.bak_{label}_{stamp}"
+    candidate = base
+    n = 2
+    while os.path.exists(candidate):
+        candidate = f"{base}_{n}"
+        n += 1
+    return candidate
+
+
+def replace_override_folder(staging_dir, output_dir, old_folder=None):
+    staging_dir = os.path.abspath(staging_dir)
+    output_dir = require_overrides_child(output_dir)
+    old_folder = require_overrides_child(old_folder) if old_folder else None
+    if not os.path.isdir(staging_dir):
+        raise ValueError("Staged override folder is missing.")
+    if old_folder and os.path.normcase(old_folder) != os.path.normcase(output_dir) and os.path.exists(output_dir):
+        raise FileExistsError(output_dir)
+
+    backup = None
+    backup_source = None
+    try:
+        if old_folder and os.path.exists(old_folder):
+            backup_source = old_folder
+        elif os.path.exists(output_dir):
+            backup_source = output_dir
+        if backup_source:
+            backup = unique_backup_folder(backup_source)
+            os.rename(backup_source, backup)
+        os.rename(staging_dir, output_dir)
+    except Exception:
+        if backup and backup_source and os.path.exists(backup) and not os.path.exists(backup_source):
+            try:
+                os.rename(backup, backup_source)
+            except Exception:
+                pass
+        raise
+    else:
+        if backup and os.path.exists(backup):
+            shutil.rmtree(backup, ignore_errors=True)
+    return output_dir
+
+
+def create_override_pack_at(options, output_dir, old_folder=None):
+    staging_dir = os.path.join(OVERRIDES_DIR, f".gom_tmp_{uuid.uuid4().hex}")
+    try:
+        staged_options = dict(options)
+        staged_options["output_dir"] = staging_dir
+        create_override_pack(staged_options)
+        return replace_override_folder(staging_dir, output_dir, old_folder=old_folder)
+    finally:
+        if os.path.isdir(staging_dir):
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+
 def create_override_pack(options):
     name = str(options.get("name") or "").strip()
     if not name:
@@ -2210,13 +2353,19 @@ def create_override_pack(options):
     model_base = safe_game_path(source_target.get("model_base", ""), allow_empty=False, strip_ext=True)
     arms_base = safe_game_path(source_target.get("arms_base", ""), allow_empty=True, strip_ext=True)
     sprite_dir = safe_game_path(options.get("sprite_dir") or source_target.get("sprite_dir", ""), allow_empty=True)
+    output_dir = options.get("output_dir")
     overrides_dir = options.get("overrides_dir") or OVERRIDES_DIR
-    output_dir = os.path.join(overrides_dir, pack_folder_name(name))
+    if output_dir:
+        output_dir = os.path.abspath(output_dir)
+        overrides_dir = os.path.dirname(output_dir)
+    else:
+        output_dir = os.path.join(overrides_dir, pack_folder_name(name))
     if os.path.exists(output_dir):
         raise FileExistsError(output_dir)
     os.makedirs(overrides_dir, exist_ok=True)
     try:
         os.makedirs(output_dir, exist_ok=False)
+        copy_pack_extras(options.get("preserve_extras_from") or "", output_dir)
         copy_model_sidecars(options.get("main_model"), model_base, output_dir)
         if options.get("arms_model") and arms_base:
             copy_model_sidecars(options.get("arms_model"), arms_base, output_dir)
@@ -3158,8 +3307,8 @@ class App(tk.Tk):
         self.cfg = load_config()
         self.packs = []
         self.title("GMod Override Manager")
-        self.geometry("760x540")
-        self.minsize(640, 520)
+        self.geometry("1180x540")
+        self.minsize(1100, 520)
         self.community_index = None
         self._presence_running = False
         self.detected_server = ""
@@ -3231,6 +3380,7 @@ class App(tk.Tk):
         ttk.Button(bot, text="Enable", command=lambda: self.set_state(True)).pack(side="left")
         ttk.Button(bot, text="Disable", command=lambda: self.set_state(False)).pack(side="left", padx=4)
         ttk.Button(bot, text="Delete", command=self.delete_selected).pack(side="left")
+        ttk.Button(bot, text="Edit", command=self.edit_selected).pack(side="left", padx=4)
         ttk.Button(bot, text="Toggle (dbl-click)", command=self.toggle).pack(side="left")
         ttk.Button(bot, text="Open overrides folder", command=self.open_overrides).pack(side="left", padx=4)
         ttk.Button(bot, text="Override Maker", command=self.override_maker).pack(side="left")
@@ -3297,6 +3447,7 @@ class App(tk.Tk):
         "5) ADD A NEW OVERRIDE\n"
         "   Click 'Override Maker' to build a pack from local model files\n"
         "   and manually assigned game-ready VTF/VMT sprites.\n"
+        "   To change one later, select it in the list and click Edit.\n"
         "   Or click 'Open overrides folder' and drop a pack FOLDER inside it,\n"
         "   then click Refresh. A pack looks like:\n"
         "       MyOverride/\n"
@@ -3350,22 +3501,49 @@ class App(tk.Tk):
         except Exception:
             messagebox.showinfo("Overrides folder", OVERRIDES_DIR)
 
-    def override_maker(self):
+    def override_maker(self, edit_pack=None):
+        edit_pack = edit_pack or None
+        editing = bool(edit_pack)
+        edit_folder = os.path.abspath(edit_pack.get("folder", "")) if editing else ""
+        edit_meta = read_override_json(edit_folder) if editing else {}
+        edit_source = infer_source_target(edit_folder) if editing else {}
+
+        def target_name_for_source(source, fallback):
+            source_base = path_without_ext(normalize_game_path(source.get("model_base", "")))
+            if source_base:
+                for target in available_targets(self.cfg):
+                    if target["name"] == DEFAULT_TARGET_NAME:
+                        continue
+                    target_base = path_without_ext(normalize_game_path(target.get("model_base", "")))
+                    if source_base == target_base:
+                        return target["name"]
+            if find_target(self.cfg, fallback):
+                return fallback
+            targets = [t["name"] for t in available_targets(self.cfg) if t["name"] != DEFAULT_TARGET_NAME]
+            return targets[0] if targets else ""
+
+        initial_target = target_name_for_source(
+            edit_source,
+            edit_meta.get("character") or (edit_pack or {}).get("character") or "Himiko Yumeno",
+        ) if editing else "Himiko Yumeno"
+
         win = tk.Toplevel(self)
-        win.title("Override Maker")
+        dialog_title = "Edit Override" if editing else "Override Maker"
+        win.title(dialog_title)
         win.geometry("760x620")
         win.minsize(680, 520)
         win.transient(self)
 
-        pack_name = tk.StringVar()
-        skin = tk.StringVar(value="Local model + sprites")
-        override_target_name = tk.StringVar(value="Himiko Yumeno")
-        model_path = tk.StringVar()
-        arms_path = tk.StringVar()
-        material_root = tk.StringVar()
+        pack_name = tk.StringVar(value=(edit_meta.get("name") or (edit_pack or {}).get("name") or "") if editing else "")
+        skin = tk.StringVar(value=(edit_meta.get("skin") or (edit_pack or {}).get("skin") or "Local model + sprites"))
+        override_target_name = tk.StringVar(value=initial_target)
+        model_path = tk.StringVar(value=pack_file_from_base(edit_folder, edit_source.get("model_base", "")) if editing else "")
+        arms_path = tk.StringVar(value=pack_file_from_base(edit_folder, edit_source.get("arms_base", "")) if editing else "")
+        material_root = tk.StringVar(value=edit_folder if editing and os.path.isdir(os.path.join(edit_folder, "materials")) else "")
         workshop_link = tk.StringVar()
-        sprite_dir = tk.StringVar()
-        description = tk.StringVar(value="Created with Override Maker.")
+        sprite_dir = tk.StringVar(value=edit_source.get("sprite_dir", "") if editing else "")
+        description = tk.StringVar(value=(edit_meta.get("description") or (edit_pack or {}).get("description") or "Created with Override Maker."))
+        sprite_prefill = collect_pack_sprite_assignments(edit_folder, sprite_dir.get()) if editing else {}
         sprite_rows = []
         status = tk.StringVar(value="")
 
@@ -3525,6 +3703,10 @@ class App(tk.Tk):
             label, filename = make_sprite_group_slot(group_name, index)
             path_var = tk.StringVar()
             filename_var = tk.StringVar(value=filename)
+            prefill = sprite_prefill.get((group_name, index))
+            if prefill:
+                path_var.set(prefill["path"])
+                filename_var.set(prefill["filename"])
             frame = ttk.Frame(parent, padding=(6, 3))
             frame.pack(fill="x")
             ttk.Label(frame, text=label, width=22).pack(side="left")
@@ -3551,6 +3733,10 @@ class App(tk.Tk):
             sprite_rows.append(row_data)
             update_scroll_region()
             return row_data
+
+        def prefill_count(group_name, default_count):
+            counts = [index for name, index in sprite_prefill if name == group_name]
+            return max([int(default_count)] + counts)
 
         for group in SPRITE_GROUPS:
             group_state = {"count": 0}
@@ -3583,15 +3769,15 @@ class App(tk.Tk):
 
             ttk.Button(header, text=f"Add {group['name']}", command=add_group_sprite).pack(side="left")
             ttk.Button(header, text="Pick Multiple", command=pick_multiple).pack(side="left", padx=6)
-            for _ in range(int(group["initial"])):
+            for _ in range(prefill_count(group["name"], group["initial"])):
                 add_group_sprite()
 
         ttk.Label(form, textvariable=status, foreground="#a05").pack(fill="x", pady=(4, 0))
 
-        def create():
+        def save_override():
             target = find_target(self.cfg, override_target_name.get())
             if not target:
-                messagebox.showerror("Override Maker", "Select a character to override.", parent=win)
+                messagebox.showerror(dialog_title, "Select a character to override.", parent=win)
                 return
             assignments = {}
             for row_data in sprite_rows:
@@ -3601,39 +3787,88 @@ class App(tk.Tk):
                         "path": path,
                         "filename": row_data["filename_var"].get().strip(),
                     }
-            output = os.path.join(OVERRIDES_DIR, pack_folder_name(pack_name.get()))
-            if os.path.exists(output):
+            output = os.path.abspath(os.path.join(OVERRIDES_DIR, pack_folder_name(pack_name.get())))
+            old_folder = edit_folder if editing else ""
+            active_pack = edit_pack if editing else self.pack_by_folder(output)
+            active_target = enabled_target_name(self.cfg, active_pack) if active_pack else ""
+            old_slug = pack_addon_prefix(active_pack) if active_pack else ""
+            targets = self.cfg.get("pack_targets")
+            old_pref = targets.get(old_slug) if isinstance(targets, dict) and old_slug in targets else None
+            old_for_replace = old_folder if editing else (output if os.path.exists(output) else None)
+
+            if editing:
+                if not os.path.isdir(old_folder):
+                    messagebox.showerror(dialog_title, "The selected override folder no longer exists.", parent=win)
+                    return
+                if os.path.exists(output) and os.path.normcase(output) != os.path.normcase(old_folder):
+                    messagebox.showerror(
+                        dialog_title,
+                        "Another override already uses that pack folder name.\n\nChoose a different pack name.",
+                        parent=win,
+                    )
+                    return
+            elif os.path.exists(output):
                 if not messagebox.askyesno("Replace pack", f"Replace existing local override folder?\n\n{output}", parent=win):
                     return
-                shutil.rmtree(output)
+
+            options = {
+                "name": pack_name.get(),
+                "character": target["name"],
+                "skin": skin.get(),
+                "description": description.get(),
+                "recommended_target": target["name"],
+                "source_target": target,
+                "main_model": model_path.get(),
+                "arms_model": arms_path.get(),
+                "material_root": material_root.get(),
+                "sprite_dir": sprite_dir.get(),
+                "sprite_assignments": assignments,
+            }
+            if old_for_replace:
+                options["preserve_extras_from"] = old_for_replace
+
+            disabled_for_save = False
             try:
-                created = create_override_pack({
-                    "name": pack_name.get(),
-                    "character": target["name"],
-                    "skin": skin.get(),
-                    "description": description.get(),
-                    "recommended_target": target["name"],
-                    "source_target": target,
-                    "main_model": model_path.get(),
-                    "arms_model": arms_path.get(),
-                    "material_root": material_root.get(),
-                    "sprite_dir": sprite_dir.get(),
-                    "sprite_assignments": assignments,
-                })
+                if active_pack and active_target:
+                    disable(self.cfg, active_pack)
+                    disabled_for_save = True
+                created = create_override_pack_at(options, output, old_folder=old_for_replace)
+                new_slug = slugify(pack_name.get())
+                if old_pref is not None:
+                    self.cfg.setdefault("pack_targets", {})
+                    if old_slug and old_slug != new_slug:
+                        self.cfg["pack_targets"].pop(old_slug, None)
+                    self.cfg["pack_targets"][new_slug] = old_pref
+                    save_config(self.cfg)
+                self.refresh()
+                new_pack = self.pack_by_folder(created)
+                if active_target and new_pack:
+                    save_pack_target(self.cfg, new_pack, active_target)
+                    target_for_enable = find_target(self.cfg, active_target) if active_target != DEFAULT_TARGET_NAME else None
+                    enable(self.cfg, new_pack, target_for_enable)
+                    self.refresh()
+                self.select_pack_folder(created)
             except Exception as e:
+                if disabled_for_save and active_pack and active_target and os.path.isdir(active_pack.get("folder", "")):
+                    try:
+                        target_for_enable = find_target(self.cfg, active_target) if active_target != DEFAULT_TARGET_NAME else None
+                        enable(self.cfg, active_pack, target_for_enable)
+                    except Exception:
+                        pass
                 status.set(str(e))
-                messagebox.showerror("Override Maker", str(e), parent=win)
+                messagebox.showerror(dialog_title, str(e), parent=win)
                 return
-            self.refresh()
-            messagebox.showinfo("Override Maker", f"Created override pack:\n\n{created}", parent=win)
+            verb = "Saved changes to" if editing else "Created override pack"
+            messagebox.showinfo(dialog_title, f"{verb}:\n\n{created}", parent=win)
             win.destroy()
 
         buttons = ttk.Frame(win, padding=(10, 0, 10, 10))
         buttons.pack(fill="x")
-        ttk.Button(buttons, text="Create Override", command=create).pack(side="right")
+        ttk.Button(buttons, text="Save Changes" if editing else "Create Override", command=save_override).pack(side="right")
         ttk.Button(buttons, text="Cancel", command=win.destroy).pack(side="right", padx=6)
 
-        update_source()
+        if not editing or not sprite_dir.get().strip():
+            update_source()
 
     def community_packs(self):
         win = tk.Toplevel(self)
@@ -3871,6 +4106,26 @@ class App(tk.Tk):
             return None
         return self.packs[int(sel[0])]
 
+    def pack_by_folder(self, folder):
+        folder = os.path.normcase(os.path.abspath(folder))
+        for pack in self.packs:
+            if os.path.normcase(os.path.abspath(pack.get("folder", ""))) == folder:
+                return pack
+        return None
+
+    def select_pack_folder(self, folder):
+        folder = os.path.normcase(os.path.abspath(folder))
+        for i, pack in enumerate(self.packs):
+            if os.path.normcase(os.path.abspath(pack.get("folder", ""))) != folder:
+                continue
+            iid = str(i)
+            self.tree.selection_set(iid)
+            self.tree.focus(iid)
+            self.tree.see(iid)
+            self.update_desc()
+            return pack
+        return None
+
     def update_desc(self):
         p = self.selected()
         if p:
@@ -3915,6 +4170,13 @@ class App(tk.Tk):
                                 "Another enabled override already uses that character, so to avoid a clash "
                                 "these were moved to their next best target (the override made first keeps "
                                 "priority):\n\n" + lines)
+
+    def edit_selected(self):
+        p = self.selected()
+        if not p:
+            messagebox.showinfo("Pick one", "Select an override first.")
+            return
+        self.override_maker(edit_pack=p)
 
     def apply_reconcile(self, enabling=None, disabling=None):
         """Reconcile every enabled override onto a distinct target character. When two

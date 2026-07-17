@@ -1,6 +1,15 @@
 {
   "packs": [
     {
+      "name": "Epstein",
+      "character": "Byakuya Togami",
+      "skin": "Local model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Replaces Byakuya Togami with the Epstein model, materials, and courtroom sprites.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Epstein.zip"
+    },
+    {
       "name": "Female Shuichi",
       "character": "Shuichi Saihara",
       "skin": "Female model + sprites",
