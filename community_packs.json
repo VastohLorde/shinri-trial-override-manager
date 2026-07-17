@@ -37,6 +37,16 @@
       "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Hoshino.Himiko.zip"
     },
     {
+      "name": "Kirk",
+      "character": "Himiko Yumeno",
+      "recommended_target": "Yasuhiro Hagakure (Danganronpa)",
+      "skin": "Kirk model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Replaces Himiko Yumeno with Kirk model, materials, and courtroom sprites. Recommended target: Yasuhiro Hagakure.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Kirk.zip"
+    },
+    {
       "name": "Shiroko Terror Kirumi",
       "character": "Kirumi Tojo",
       "skin": "Shiroko Terror model + sprites",
