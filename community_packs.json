@@ -38,12 +38,12 @@
     },
     {
       "name": "Kirk",
-      "character": "Himiko Yumeno",
+      "character": "Yasuhiro Hagakure (Danganronpa)",
       "recommended_target": "Yasuhiro Hagakure (Danganronpa)",
       "skin": "Kirk model + sprites",
       "version": "0.1.0",
       "author": "VastohLorde",
-      "description": "Replaces Himiko Yumeno with Kirk model, materials, and courtroom sprites. Recommended target: Yasuhiro Hagakure.",
+      "description": "Replaces Yasuhiro Hagakure with Kirk model, materials, and courtroom sprites.",
       "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Kirk.zip"
     },
     {
