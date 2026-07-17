@@ -2551,7 +2551,11 @@ def write_update_script(tmp_dir, src_app, dst_app, exe_path, pid):
     exe_name = os.path.basename(exe_path)
     lines = [
         "@echo off",
+        "setlocal",
         "title GMod Override Manager Updater",
+        'set "SRC=%s"' % src_app,
+        'set "DST=%s"' % dst_app,
+        'set "EXE=%s"' % exe_name,
         "echo Waiting for the app to close...",
         ":waitloop",
         'tasklist /FI "PID eq %d" 2>NUL | find "%d" >NUL' % (pid, pid),
@@ -2559,10 +2563,21 @@ def write_update_script(tmp_dir, src_app, dst_app, exe_path, pid):
         "  ping 127.0.0.1 -n 2 >NUL",
         "  goto waitloop",
         ")",
+        "ping 127.0.0.1 -n 2 >NUL",
         "echo Installing update...",
-        'robocopy "%s" "%s" /E /NFL /NDL /NJH /NJS /R:2 /W:1 >NUL' % (src_app, dst_app),
+        'robocopy "%SRC%" "%DST%" /E /XF "%EXE%" /NFL /NDL /NJH /NJS /R:10 /W:1 >NUL',
+        "echo Updating main executable...",
+        "for /L %%I in (1,1,30) do (",
+        '  copy /Y "%SRC%\\%EXE%" "%DST%\\%EXE%" >NUL 2>NUL',
+        "  if not errorlevel 1 goto copied_exe",
+        "  ping 127.0.0.1 -n 2 >NUL",
+        ")",
+        "echo Failed to update the main executable. Close Override Manager and run the update again.",
+        "pause",
+        "exit /b 1",
+        ":copied_exe",
         "echo Update complete. Restarting...",
-        'start "" "%s\\%s"' % (dst_app, exe_name),
+        'start "" "%DST%\\%EXE%"',
     ]
     with open(bat, "w", encoding="ascii", errors="ignore") as f:
         f.write("\r\n".join(lines))
