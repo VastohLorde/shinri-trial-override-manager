@@ -129,8 +129,8 @@ class RetargetingTests(unittest.TestCase):
         init_source = inspect.getsource(om.App.__init__)
 
         self.assertGreater(source.index("Check for Updates"), source.index("bot4 = ttk.Frame"))
-        self.assertIn('self.geometry("760x540")', init_source)
-        self.assertIn('self.minsize(640, 520)', init_source)
+        self.assertIn('self.geometry("1180x540")', init_source)
+        self.assertIn('self.minsize(1100, 520)', init_source)
 
     def test_extract_workshop_gma_uses_fresh_folder_when_previous_extract_is_locked(self):
         app_dir = os.path.join(self.tempdir, "app")
@@ -371,7 +371,7 @@ class RetargetingTests(unittest.TestCase):
 
         self.assertIn("local OVERRIDES = {", content)
         self.assertIn("sources = {", content)
-        self.assertEqual(1, content.count("if ply:GetBodygroup(item.override) ~= value then"))
+        self.assertEqual(1, content.count("if ent:GetBodygroup(item.override) ~= value then"))
 
     def test_bodygroup_name_patch_can_append_longer_labels(self):
         source_pack = r"C:\Users\user\Desktop\GMod_Override_Manager\overrides\Hoshino Himiko"
@@ -452,6 +452,26 @@ class RetargetingTests(unittest.TestCase):
         self.assertEqual(0, keeps.get(0))
         self.assertEqual(1, keeps.get(1))
         self.assertEqual(2, keeps.get(2))
+
+    def test_plan_bodygroup_layout_pads_missing_native_slots_with_empty_groups(self):
+        override_groups = [
+            {"index": 0, "name": "base", "count": 1, "base": 1},
+            {"index": 1, "name": "outfit", "count": 2, "base": 1},
+            {"index": 2, "name": "handcuffs", "count": 2, "base": 2},
+        ]
+        target_groups = [
+            {"index": 0, "name": "reference", "count": 1, "base": 1},
+            {"index": 1, "name": "shoes", "count": 2, "base": 1},
+            {"index": 2, "name": "shirt", "count": 2, "base": 2},
+            {"index": 3, "name": "hat", "count": 2, "base": 4},
+        ]
+
+        slots = om.plan_bodygroup_layout(override_groups, target_groups)
+
+        self.assertEqual(4, len(slots))
+        self.assertEqual("move", slots[1]["kind"])
+        self.assertEqual("move", slots[2]["kind"])
+        self.assertEqual({"kind": "empty", "name": "hat", "base": 4, "count": 2}, slots[3])
 
     def test_plan_bodygroup_layout_resolves_shoe_skirt_collision_on_real_shiroko_mahiru(self):
         # The real bug this session: Shiroko Mahiru's "Shoes" and "Skirt" bodygroups were

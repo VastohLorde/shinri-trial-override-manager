@@ -53,7 +53,7 @@ OLD_COMMUNITY_INDEX_URLS = {
 # Cloud presence backend (Cloudflare Worker - see presence_worker.js). Baked in so
 # all app users share it with zero config. Empty string = cloud presence disabled.
 DEFAULT_PRESENCE_URL = ""
-APP_VERSION = "1.24"
+APP_VERSION = "1.25"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -325,6 +325,9 @@ def sprite_name_from_target_name(name):
     aliases = {
         "K1-B0": "k1b0",
         "Keebo": "k1b0",
+        "Kokichi Oma Beta Uniform": "kokichi oma",
+        "Kokichi Oma School Uniform": "kokichi oma",
+        "Kokichi Oma Ultimate Uniform": "kokichi oma",
         "Nekomaru": "nekomaru nidai",
     }
     if base in aliases:
@@ -599,6 +602,8 @@ def find_known_target_mdl(target):
     model_rel = normalize_game_path(target.get("model_base", "")) + ".mdl"
     candidates = [
         os.path.join(APP_DIR, *model_rel.split("/")),
+        os.path.join(APP_DIR, "debug_extracts", "dro_playermodels_2562456244_current", *model_rel.split("/")),
+        os.path.join(APP_DIR, "workshop_extracts", "2562456244_fresh", *model_rel.split("/")),
         os.path.join(APP_DIR, "debug_extracts", "dro_playermodels_2562456244", *model_rel.split("/")),
         os.path.join(r"C:\Users\user\Desktop\Female_Shuichi_Addon_Extracts\2562456244_PlayerModels_ST", *model_rel.split("/")),
         os.path.join(r"C:\Users\user\Desktop\GMod_Override_Manager\overrides", *model_rel.split("/")),
@@ -828,21 +833,20 @@ def generate_bodygroup_compat_lua(model_path, mapping):
         )
     lines += [
         "}",
-        "local function rawBody(ply)",
-        "  local body = ply:GetInternalVariable('m_nBody')",
-        "  if body == nil and ply.GetSaveTable then",
-        "    local st = ply:GetSaveTable()",
+        "local function rawBody(ent)",
+        "  local body = ent:GetInternalVariable('m_nBody')",
+        "  if body == nil and ent.GetSaveTable then",
+        "    local st = ent:GetSaveTable()",
         "    body = st and st.m_nBody",
         "  end",
         "  return tonumber(body) or 0",
         "end",
-        "local function apply()",
-        "  local ply = LocalPlayer()",
-        "  if not IsValid(ply) then return end",
-        "  if string.lower(ply:GetModel() or '') ~= MODEL then return end",
-        "  if ply.__ovrBodygroupCompatBusy then return end",
-        "  ply.__ovrBodygroupCompatBusy = true",
-        "  local body = rawBody(ply)",
+        "local function applyEntity(ent)",
+        "  if not IsValid(ent) then return end",
+        "  if string.lower(ent:GetModel() or '') ~= MODEL then return end",
+        "  if ent.__ovrBodygroupCompatBusy then return end",
+        "  ent.__ovrBodygroupCompatBusy = true",
+        "  local body = rawBody(ent)",
         "  for _, item in ipairs(OVERRIDES) do",
         "    local value = 0",
         "    for _, source in ipairs(item.sources or {}) do",
@@ -853,12 +857,17 @@ def generate_bodygroup_compat_lua(model_path, mapping):
         "      if sourceValue > value then value = sourceValue end",
         "    end",
         "    if item.count and item.count > 0 then value = math.Clamp(value, 0, item.count - 1) end",
-        "    if ply:GetBodygroup(item.override) ~= value then ply:SetBodygroup(item.override, value) end",
+        "    if ent:GetBodygroup(item.override) ~= value then ent:SetBodygroup(item.override, value) end",
         "  end",
-        "  ply.__ovrBodygroupCompatBusy = false",
+        "  ent.__ovrBodygroupCompatBusy = false",
+        "end",
+        "local function apply()",
+        "  for _, ply in ipairs(player.GetAll()) do",
+        "    applyEntity(ply)",
+        "  end",
         "end",
         "hook.Add('Think', 'ovr_bodygroup_compat_' .. MODEL, apply)",
-        "hook.Add('PostPlayerDraw', 'ovr_bodygroup_compat_draw_' .. MODEL, function(ply) if ply == LocalPlayer() then apply() end end)",
+        "hook.Add('PostPlayerDraw', 'ovr_bodygroup_compat_draw_' .. MODEL, applyEntity)",
         "",
     ]
     return "\n".join(lines)
@@ -879,6 +888,94 @@ def write_bodygroup_compat_lua(dest_folder, pack, target, source):
     lua_name = f"ovr_bodygroup_compat_{addon_slug(pack, target)}.lua"
     with open(os.path.join(lua_dir, lua_name), "w", encoding="utf-8") as f:
         f.write(generate_bodygroup_compat_lua(target.get("model_base", "") + ".mdl", mapping))
+    return True
+
+
+def generate_carry_camera_guard_lua():
+    return "\n".join([
+        "if SERVER then return end",
+        "if _G.__ovrCarryCameraGuardInstalled then return end",
+        "_G.__ovrCarryCameraGuardInstalled = true",
+        "",
+        "local MAX_REASONABLE_DIST_SQR = 768 * 768",
+        "",
+        "local function validVector(v)",
+        "  if not isvector(v) then return false end",
+        "  if v.x ~= v.x or v.y ~= v.y or v.z ~= v.z then return false end",
+        "  return math.abs(v.x) < 16384 and math.abs(v.y) < 16384 and math.abs(v.z) < 16384",
+        "end",
+        "",
+        "local function traceBack(anchor, angles, fov)",
+        "  if not validVector(anchor) then",
+        "    local ply = LocalPlayer()",
+        "    anchor = IsValid(ply) and (ply:GetPos() + Vector(0, 0, 64)) or Vector(0, 0, 64)",
+        "  end",
+        "  angles = isangle(angles) and angles or Angle(0, 0, 0)",
+        "  local tr = util.TraceHull({",
+        "    start = anchor,",
+        "    endpos = anchor - angles:Forward() * 100,",
+        "    filter = function(ent)",
+        "      if not IsValid(ent) then return true end",
+        "      if ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot() or ent:IsVehicle() then return false end",
+        "      return true",
+        "    end,",
+        "    mins = Vector(-1, -1, -1),",
+        "    maxs = Vector(1, 1, 1),",
+        "    mask = MASK_SHOT_HULL",
+        "  })",
+        "  return {",
+        "    origin = validVector(tr.HitPos) and tr.HitPos or anchor,",
+        "    angles = angles,",
+        "    fov = fov,",
+        "    drawviewer = false",
+        "  }",
+        "end",
+        "",
+        "local function needsFallback(view, anchor)",
+        "  if not istable(view) or not validVector(view.origin) then return true end",
+        "  if validVector(anchor) and view.origin:DistToSqr(anchor) > MAX_REASONABLE_DIST_SQR then return true end",
+        "  return false",
+        "end",
+        "",
+        "local function wrapCameraFunction(name, anchorFn)",
+        "  if not carry_mount or type(carry_mount[name]) ~= 'function' then return end",
+        "  local mark = '__ovrGuarded_' .. name",
+        "  if carry_mount[mark] == carry_mount[name] then return end",
+        "  local original = carry_mount[name]",
+        "  carry_mount[name] = function(ply, pos, angles, fov)",
+        "    local anchor = anchorFn(ply)",
+        "    local ok, view = pcall(original, ply, pos, angles, fov)",
+        "    if (not ok) or needsFallback(view, anchor) then",
+        "      return traceBack(anchor, angles, fov)",
+        "    end",
+        "    return view",
+        "  end",
+        "  carry_mount[mark] = carry_mount[name]",
+        "end",
+        "",
+        "local function installGuard()",
+        "  if not carry_mount then return end",
+        "  wrapCameraFunction('CarryCamera', function(ply)",
+        "    local carrier = IsValid(ply) and ply.beingCarriedBy or nil",
+        "    return IsValid(carrier) and carrier:EyePos() or nil",
+        "  end)",
+        "  wrapCameraFunction('MountCamera', function(ply)",
+        "    local mount = IsValid(ply) and ply.mountPly or nil",
+        "    return IsValid(mount) and mount:EyePos() or nil",
+        "  end)",
+        "end",
+        "",
+        "hook.Add('Think', 'ovr_carry_camera_guard_install', installGuard)",
+        "timer.Simple(0, installGuard)",
+        "",
+    ])
+
+
+def write_carry_camera_guard_lua(dest_folder):
+    lua_dir = os.path.join(dest_folder, "lua", "autorun")
+    os.makedirs(lua_dir, exist_ok=True)
+    with open(os.path.join(lua_dir, "ovr_carry_camera_guard.lua"), "w", encoding="utf-8") as f:
+        f.write(generate_carry_camera_guard_lua())
     return True
 
 
@@ -923,6 +1020,7 @@ def plan_bodygroup_layout(override_groups, target_groups):
     compat = bodygroup_compat_map(target_groups, override_groups)
     override_by_index = {int(g["index"]): g for g in override_groups}
     numbodyparts = (max(override_by_index) + 1) if override_by_index else 0
+    target_by_index = {int(g["index"]): g for g in target_groups}
 
     move_plan = {}
     claimed = set()
@@ -943,7 +1041,11 @@ def plan_bodygroup_layout(override_groups, target_groups):
         claimed.add(int(target_index))
 
     bystanders = [i for i in range(numbodyparts) if i not in move_plan and i in claimed]
-    tail = max(numbodyparts, (max(claimed) + 1) if claimed else 0)
+    tail = max(
+        numbodyparts,
+        (max(claimed) + 1) if claimed else 0,
+        (max(target_by_index) + 1) if target_by_index else 0,
+    )
     total = tail + len(bystanders)
     slots = [None] * total
 
@@ -963,7 +1065,13 @@ def plan_bodygroup_layout(override_groups, target_groups):
 
     for i in range(total):
         if slots[i] is None:
-            slots[i] = {"kind": "empty"}
+            target = target_by_index.get(i, {})
+            slots[i] = {
+                "kind": "empty",
+                "name": target.get("name", ""),
+                "base": int(target.get("base") or 1),
+                "count": max(1, int(target.get("count") or 1)),
+            }
     return slots
 
 
@@ -1016,9 +1124,9 @@ def patch_mdl_relocate_bodygroups(path, slots):
         data.extend(str(name or "").encode("utf-8") + b"\0")
         return out
 
-    def append_empty_model():
+    def append_empty_models(count):
         out = len(data)
-        data.extend(b"\0" * 148)
+        data.extend(b"\0" * (148 * max(1, int(count or 1))))
         return out
 
     new_count = len(slots)
@@ -1043,9 +1151,10 @@ def patch_mdl_relocate_bodygroups(path, slots):
                 record["model_abs"] - dest,
             )
         else:
-            empty_abs = append_empty_model()
-            name_abs = append_name("")
-            struct.pack_into("<iiii", data, dest, name_abs - dest, 1, 1, empty_abs - dest)
+            count = max(1, int(slot.get("count") or 1))
+            empty_abs = append_empty_models(count)
+            name_abs = append_name(slot.get("name", ""))
+            struct.pack_into("<iiii", data, dest, name_abs - dest, count, int(slot.get("base") or 1), empty_abs - dest)
 
     struct.pack_into("<ii", data, 232, new_count, new_table)
     struct.pack_into("<i", data, 76, len(data))
@@ -1082,13 +1191,16 @@ def patch_vtx_relocate_bodygroups(vtx_path, slots):
         old_num_models.append(num_models)
         old_models_abs.append(bp_off + model_offset_rel)
 
-    def append_empty_model():
+    def append_empty_models(count):
+        count = max(1, int(count or 1))
         model_off = len(data)
-        data.extend(b"\0" * 8)
-        lod_off = len(data)
-        data.extend(b"\0" * 12)
-        struct.pack_into("<ii", data, model_off, 1, lod_off - model_off)
-        struct.pack_into("<iif", data, lod_off, 0, 0, 0.0)
+        data.extend(b"\0" * (count * 8))
+        for i in range(count):
+            rec_off = model_off + i * 8
+            lod_off = len(data)
+            data.extend(b"\0" * 12)
+            struct.pack_into("<ii", data, rec_off, 1, lod_off - rec_off)
+            struct.pack_into("<iif", data, lod_off, 0, 0, 0.0)
         return model_off
 
     new_count = len(slots)
@@ -1103,8 +1215,9 @@ def patch_vtx_relocate_bodygroups(vtx_path, slots):
                 return False
             struct.pack_into("<ii", data, rec_off, old_num_models[src], old_models_abs[src] - rec_off)
         else:
-            empty_abs = append_empty_model()
-            struct.pack_into("<ii", data, rec_off, 1, empty_abs - rec_off)
+            count = max(1, int(slot.get("count") or 1))
+            empty_abs = append_empty_models(count)
+            struct.pack_into("<ii", data, rec_off, count, empty_abs - rec_off)
 
     struct.pack_into("<i", data, 28, new_count)
     struct.pack_into("<i", data, 32, new_table_off)
@@ -1940,7 +2053,7 @@ def patch_retargeted_model_bodygroup_names(dest_folder, pack, target, source):
     # before this is trusted as settled.
     target_reference_phy = target_reference_mdl[:-4] + ".phy" if target_reference_mdl.lower().endswith(".mdl") else ""
     changed_bones = align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_reference_phy) \
-        if os.path.exists(target_reference_phy) else False
+        if os.path.exists(target_reference_phy) and not pack_disables_bone_alignment(pack) else False
     return changed_bodygroups or changed_attach or changed_bones
 
 
@@ -1970,8 +2083,23 @@ def patch_default_model_bodygroup_names(dest_folder, pack, source):
     # docstring.
     target_reference_phy = target_reference_mdl[:-4] + ".phy" if target_reference_mdl.lower().endswith(".mdl") else ""
     changed_bones = align_ragdoll_bones_to_stock(copied_mdl, target_reference_mdl, target_reference_phy) \
-        if os.path.exists(target_reference_phy) else False
+        if os.path.exists(target_reference_phy) and not pack_disables_bone_alignment(pack) else False
     return changed_bodygroups or changed_attach or changed_bones
+
+
+def pack_disables_bone_alignment(pack):
+    """Some replacement models render correctly only with their original bone table.
+    Keep the bodygroup/attachment compatibility patches, but skip the invasive
+    bone-table permutation unless a pack explicitly opts in. This also avoids
+    leaving a partially patched .mdl/.vvd/.vtx set when the VTX permutation parser
+    cannot safely handle a model."""
+    try:
+        data = read_override_json(pack.get("folder", ""))
+    except Exception:
+        return True
+    if data.get("enable_bone_alignment") or data.get("force_bone_alignment"):
+        return False
+    return True
 
 
 def read_source_target_from_json(folder):
@@ -2069,6 +2197,15 @@ def map_retarget_path(rel_path, source, target):
     return rel
 
 
+def is_non_source_sprite_path(rel_path, source):
+    rel = normalize_game_path(rel_path)
+    source_sprite = normalize_game_path((source or {}).get("sprite_dir", ""))
+    sprites_root = "materials/dro/sprites/characters/"
+    if not source_sprite or not rel.startswith(sprites_root):
+        return False
+    return rel != source_sprite and not rel.startswith(source_sprite + "/")
+
+
 def copy_pack_tree(src_folder, dest_folder, source=None, target=None):
     for root, dirs, files in os.walk(src_folder):
         dirs[:] = [d for d in dirs if d != "__pycache__"]
@@ -2076,6 +2213,8 @@ def copy_pack_tree(src_folder, dest_folder, source=None, target=None):
             src_path = os.path.join(root, filename)
             rel = rel_game_path(src_folder, src_path)
             if rel == "override.json":
+                continue
+            if is_non_source_sprite_path(rel, source):
                 continue
             dest_rel = map_retarget_path(rel, source, target) if source and target else rel
             dest_path = os.path.join(dest_folder, *dest_rel.split("/"))
@@ -2441,13 +2580,14 @@ def enable(cfg, pack, target=None):
             patch_retargeted_model_bodygroup_names(dest, pack, target, source)
             write_bodygroup_compat_lua(dest, pack, target, source)
         else:
-            copy_pack_tree(pack["folder"], dest)
             source = infer_source_target(pack["folder"])
+            copy_pack_tree(pack["folder"], dest, source, source)
             if source.get("model_base"):
                 patch_default_model_bodygroup_names(dest, pack, source)
                 compat_target = dict(source)
                 compat_target["name"] = DEFAULT_TARGET_NAME
                 write_bodygroup_compat_lua(dest, pack, compat_target, source)
+        write_carry_camera_guard_lua(dest)
         aj = os.path.join(dest, "addon.json")
         if not os.path.exists(aj):
             with open(aj, "w", encoding="utf-8") as f:

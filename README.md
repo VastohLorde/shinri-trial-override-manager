@@ -212,6 +212,10 @@ Available from the **Community Packs** menu inside the app:
 | Hoshino Himiko | Himiko Yumeno | Hoshino model + sprites |
 | Shiroko Mahiru | Mahiru Koizumi | Shiroko model + sprites |
 | Shiroko Terror Kirumi | Kirumi Tojo | Shiroko Terror model + sprites |
+| Nozomi [BA] | Junko Enoshima (Default) | Nozomi model + sprites |
+| Hikari [BA] | Mukuro Ikusaba | Hikari model + sprites |
+| Trump | Byakuya Togami (DR2) | Trump model + sprites |
+| Netanyahu | Kokichi Oma Ultimate Uniform | Netanyahu model + sprites |
 
 ## Notes
 - Needs the base addon for that character (e.g. the Danganronpa PlayerModels

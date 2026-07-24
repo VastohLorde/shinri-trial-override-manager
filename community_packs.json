@@ -72,6 +72,46 @@
       "author": "VastohLorde",
       "description": "Replaces Mahiru Koizumi with Sunaookami Shiroko's playermodel and Shiroko courtroom sprites. Retargetable to other characters in the app.",
       "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Shiroko.Mahiru.zip"
+    },
+    {
+      "name": "Nozomi [BA]",
+      "character": "Junko Enoshima (Default)",
+      "recommended_target": "Junko Enoshima (Default)",
+      "skin": "Nozomi model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Replaces Junko Enoshima with the Nozomi override pack, including model, materials, and courtroom sprites.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Nozomi.BA.zip"
+    },
+    {
+      "name": "Hikari [BA]",
+      "character": "Mukuro Ikusaba",
+      "recommended_target": "Mukuro Ikusaba",
+      "skin": "Hikari model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Replaces Mukuro Ikusaba with the Hikari override pack, including model, materials, and courtroom sprites.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Hikari.BA.zip"
+    },
+    {
+      "name": "Trump",
+      "character": "Byakuya Togami (DR2)",
+      "recommended_target": "Byakuya Togami (DR2)",
+      "skin": "Trump model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Replaces DR2 Byakuya Togami with the Trump override pack, including model, materials, and courtroom sprites.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Trump.zip"
+    },
+    {
+      "name": "Netanyahu",
+      "character": "Kokichi Oma Ultimate Uniform",
+      "recommended_target": "Kokichi Oma Ultimate Uniform",
+      "skin": "Netanyahu model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Replaces Kokichi Oma Ultimate Uniform with the Netanyahu override pack, including model, materials, and courtroom sprites.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Netanyahu.zip"
     }
   ]
 }
