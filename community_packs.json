@@ -122,6 +122,16 @@
       "author": "VastohLorde",
       "description": "Created with Override Maker.",
       "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/EDP445.zip"
+    },
+    {
+      "name": "Z Broly",
+      "character": "Sakura Ogami",
+      "recommended_target": "Sakura Ogami",
+      "skin": "Local model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Created with Override Maker.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Z.Broly.zip"
     }
   ]
 }
