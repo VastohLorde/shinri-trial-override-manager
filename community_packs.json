@@ -112,6 +112,16 @@
       "author": "VastohLorde",
       "description": "Replaces Kokichi Oma Ultimate Uniform with the Netanyahu override pack, including model, materials, and courtroom sprites.",
       "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Netanyahu.zip"
+    },
+    {
+      "name": "EDP445",
+      "character": "Korekiyo Shinguji",
+      "recommended_target": "Korekiyo Shinguji",
+      "skin": "Local model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Created with Override Maker.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/EDP445.zip"
     }
   ]
 }
