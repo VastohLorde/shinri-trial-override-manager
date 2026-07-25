@@ -132,6 +132,16 @@
       "author": "VastohLorde",
       "description": "Created with Override Maker.",
       "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Z.Broly.zip"
+    },
+    {
+      "name": "P Diddy",
+      "character": "Teruteru Hanamura",
+      "recommended_target": "Teruteru Hanamura",
+      "skin": "Local model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Created with Override Maker.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/P.Diddy.zip"
     }
   ]
 }
