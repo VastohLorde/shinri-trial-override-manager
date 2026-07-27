@@ -152,6 +152,16 @@
       "author": "VastohLorde",
       "description": "Created with Override Maker.",
       "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/Yakub.zip"
+    },
+    {
+      "name": "King Terry The Terrible",
+      "character": "Chihiro",
+      "recommended_target": "Chihiro",
+      "skin": "Local model + sprites",
+      "version": "0.1.0",
+      "author": "VastohLorde",
+      "description": "Created with Override Maker.",
+      "download_url": "https://raw.githubusercontent.com/VastohLorde/shinri-trial-override-manager/main/community_packs/King.Terry.The.Terrible.zip"
     }
   ]
 }
