@@ -533,17 +533,17 @@
 "skins": 1,
 "groups": [
 {
-"index": 3,
+"index": 4,
 "name": "neck",
 "count": 2
 },
 {
-"index": 4,
+"index": 5,
 "name": "tie",
 "count": 2
 },
 {
-"index": 5,
+"index": 6,
 "name": "hand Ring",
 "count": 2
 }
@@ -700,6 +700,41 @@
 {
 "index": 5,
 "name": "badge",
+"count": 2
+}
+]
+},
+"Korekiyo Shinguji New": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "Chain",
+"count": 2
+},
+{
+"index": 4,
+"name": "ChainCap",
+"count": 2
+}
+]
+},
+"Korekiyo Shinguji Anniversary": {
+"skins": 1,
+"groups": [
+{
+"index": 2,
+"name": "Chain",
+"count": 2
+}
+]
+},
+"Korekiyo Shinguji Pregame": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "Mask",
 "count": 2
 }
 ]
@@ -975,6 +1010,26 @@
 {
 "index": 8,
 "name": "Skirt",
+"count": 2
+}
+]
+},
+"Peko Pekoyama Male": {
+"skins": 1,
+"groups": [
+{
+"index": 3,
+"name": "[GLASSES]",
+"count": 2
+},
+{
+"index": 4,
+"name": "[TIE]",
+"count": 2
+},
+{
+"index": 5,
+"name": "[SWORD]",
 "count": 2
 }
 ]

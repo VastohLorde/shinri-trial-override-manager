@@ -8,6 +8,7 @@ import sys
 import tempfile
 import types
 import unittest
+import unittest.mock
 
 
 sys.modules.setdefault("translate_cache", types.SimpleNamespace())
@@ -599,7 +600,9 @@ class RetargetingTests(unittest.TestCase):
             cfg = {"gmod_path": self.tempdir}
             pack = {"name": "Shiroko Terror Kirumi", "slug": "ovr_shiroko_terror_kirumi", "folder": source_pack}
 
-            om.enable(cfg, pack, None)
+            # binary bodygroup rewrites are opt-in per pack (enable_bodygroup_alignment)
+            with unittest.mock.patch.object(om, "pack_enables_binary_model_patches", return_value=True):
+                om.enable(cfg, pack, None)
 
             mdl_path = os.path.join(
                 self.tempdir,
@@ -659,7 +662,9 @@ class RetargetingTests(unittest.TestCase):
             pack = {"name": "Shiroko Terror Kirumi", "slug": "ovr_shiroko_terror_kirumi", "folder": source_pack}
             target = om.find_target({}, "Kirumi Tojo")
 
-            om.enable(cfg, pack, target)
+            # binary bodygroup rewrites are opt-in per pack (enable_bodygroup_alignment)
+            with unittest.mock.patch.object(om, "pack_enables_binary_model_patches", return_value=True):
+                om.enable(cfg, pack, target)
 
             mdl_path = os.path.join(
                 self.tempdir, "addons", om.addon_slug(pack, target),

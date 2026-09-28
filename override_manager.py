@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import struct
 import threading
+import queue
 import tempfile
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
@@ -27,6 +28,7 @@ import urllib.parse
 import zipfile
 import time
 import uuid
+import base64
 try:
     import translate_cache
 except ImportError:
@@ -35,6 +37,10 @@ try:
     import live_translator
 except ImportError:
     live_translator = None
+try:
+    from srctools.vtf import VTF as SrcVTF
+except ImportError:
+    SrcVTF = None
 
 if getattr(sys, "frozen", False):
     # running as a PyInstaller .exe -> use the folder the .exe lives in
@@ -53,11 +59,15 @@ OLD_COMMUNITY_INDEX_URLS = {
 # Cloud presence backend (Cloudflare Worker - see presence_worker.js). Baked in so
 # all app users share it with zero config. Empty string = cloud presence disabled.
 DEFAULT_PRESENCE_URL = ""
-APP_VERSION = "1.25"
+APP_VERSION = "1.26"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
 APP_EXE_NAME = "GMod Override Manager.exe"
+COMMUNITY_GITHUB_OWNER = "VastohLorde"
+COMMUNITY_GITHUB_REPO = "shinri-trial-override-manager"
+COMMUNITY_GITHUB_BRANCH = "main"
+COMMUNITY_PACKS_DIRNAME = "community_packs"
 DEFAULT_TARGET_NAME = "Default"
 CUSTOM_TARGET_NAME = "Custom target..."
 
@@ -323,6 +333,7 @@ def sprite_name_from_target_name(name):
     if base.endswith(" 2"):
         base = base[:-2].strip()
     aliases = {
+        "Chihiro": "chihiro fujisaki",
         "K1-B0": "k1b0",
         "Keebo": "k1b0",
         "Kokichi Oma Beta Uniform": "kokichi oma",
@@ -390,6 +401,9 @@ CHARACTER_TARGETS = [
     make_target("Kokichi Oma School Uniform", "models/dro/player/characters3/char2/char2_uniform.mdl", "models/dro/player/characters3/char2/c_arms/char2_school_arms.mdl"),
     make_target("Kokichi Oma Ultimate Uniform", "models/dro/player/characters3/char2/char2.mdl", "models/dro/player/characters3/char2/c_arms/char2_arms.mdl"),
     make_target("Korekiyo Shinguji", "models/dro/player/characters3/char6/char6.mdl", "models/dro/player/characters3/char6/c_arms/char6_arms.mdl"),
+    make_target("Korekiyo Shinguji New", "models/dro/player/characters3/korekiyo_shinguji/korekiyo_shinguji.mdl", "models/dro/player/characters3/korekiyo_shinguji/c_arms/korekiyo_shinguji_arms.mdl", "materials/dro/sprites/characters/dr_v3/korekiyo shinguji"),
+    make_target("Korekiyo Shinguji Anniversary", "models/dro/player/characters3/korekiyo_shinguji_anniversary/korekiyo_shinguji_anniversary.mdl", "models/dro/player/characters3/korekiyo_shinguji_anniversary/c_arms/korekiyo_shinguji_anniversary_arms.mdl", "materials/dro/sprites/characters/dr_v3/korekiyo shinguji"),
+    make_target("Korekiyo Shinguji Pregame", "models/dro/player/characters3/korekiyo_shinguji_pregame/korekiyo_shinguji_pregame.mdl", "models/dro/player/characters3/korekiyo_shinguji_pregame/c_arms/korekiyo_shinguji_pregame_arms.mdl", "materials/dro/sprites/characters/dr_v3/korekiyo shinguji"),
     make_target("Kyoko Kirigiri", "models/dro/player/characters1/char6/char6.mdl", "models/dro/player/characters1/char6/c_arms/char6_arms.mdl"),
     make_target("Leon Kuwata", "models/dro/player/characters1/char14/char14.mdl", "models/dro/player/characters1/char14/c_arms/char14_arms.mdl"),
     make_target("Mahiru Koizumi", "models/dro/player/characters2/char10/char10.mdl", "models/dro/player/characters2/char10/c_arms/char10_arms.mdl"),
@@ -403,6 +417,7 @@ CHARACTER_TARGETS = [
     make_target("Nagito Komaeda", "models/dro/player/characters2/char2/char2.mdl", "models/dro/player/characters2/char2/c_arms/char2_arms.mdl"),
     make_target("Nekomaru", "models/dro/player/characters2/char14/char14.mdl", "models/dro/player/characters2/char14/c_arms/char14_arms.mdl"),
     make_target("Peko Pekoyama", "models/dro/player/characters2/char9/char9.mdl", "models/dro/player/characters2/char9/c_arms/char9_arms.mdl"),
+    make_target("Peko Pekoyama Male", "models/dro/player/characters2/peko_pekoyama_male/peko_pekoyama_male.mdl", "models/dro/player/characters2/peko_pekoyama_male/peko_pekoyama_male_arms.mdl", "materials/dro/sprites/characters/dr_2/peko pekoyama"),
     make_target("Rantaro Amami", "models/dro/player/characters3/char5/char5.mdl", "models/dro/player/characters3/char5/c_arms/char5_arms.mdl"),
     make_target("Ryoma Hoshi", "models/dro/player/characters3/char16/char16.mdl", "models/dro/player/characters3/char16/c_arms/char16_arms.mdl"),
     make_target("Sakura Ogami", "models/dro/player/characters1/char12/char12.mdl", "models/dro/player/characters1/char12/c_arms/char12_arms.mdl"),
@@ -416,6 +431,38 @@ CHARACTER_TARGETS = [
     make_target("Tsumugi Shirogane", "models/dro/player/characters3/char14/char14.mdl", "models/dro/player/characters3/char14/c_arms/char14_arms.mdl"),
     make_target("Yasuhiro Hagakure (Danganronpa)", "models/dro/player/characters1/char15/char15.mdl", "models/dro/player/characters1/char15/c_arms/char15_arms.mdl"),
 ]
+
+
+MODEL_ALIAS_GROUPS = [
+    [
+        "models/dro/player/characters3/char6/char6",
+        "models/dro/player/characters3/korekiyo_shinguji/korekiyo_shinguji",
+        "models/dro/player/characters3/korekiyo_shinguji_anniversary/korekiyo_shinguji_anniversary",
+        "models/dro/player/characters3/korekiyo_shinguji_pregame/korekiyo_shinguji_pregame",
+    ],
+]
+
+
+def model_base_key(model_base):
+    return path_without_ext(normalize_game_path(model_base)).lower()
+
+
+def model_alias_group_for(model_base):
+    key = model_base_key(model_base)
+    for group in MODEL_ALIAS_GROUPS:
+        keys = [model_base_key(item) for item in group]
+        if key in keys:
+            return group
+    return []
+
+
+def same_model_base(left, right):
+    return model_base_key(left) == model_base_key(right)
+
+
+def canonical_model_slot(model_base):
+    group = model_alias_group_for(model_base)
+    return model_base_key(group[0]) if group else model_base_key(model_base)
 
 
 def load_character_profiles():
@@ -538,6 +585,40 @@ def find_target(cfg, name):
     return None
 
 
+def target_install_variants(cfg, target):
+    """Model paths that should be covered when this target is installed.
+    Some Shinri player model slots now have multiple registered model IDs for the
+    same character. A single override should cover all of those IDs instead of
+    replacing only the stale/default path."""
+    if not target or not target.get("model_base"):
+        return []
+    primary = dict(target)
+    group = model_alias_group_for(primary.get("model_base", ""))
+    if not group:
+        return [primary]
+    known = {
+        model_base_key(item.get("model_base", "")): item
+        for item in available_targets(cfg)
+        if item.get("name") != DEFAULT_TARGET_NAME and item.get("model_base")
+    }
+    out = []
+    seen = set()
+
+    def add(item):
+        if not item or not item.get("model_base"):
+            return
+        key = model_base_key(item["model_base"])
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(dict(item))
+
+    add(primary)
+    for alias_base in group:
+        add(known.get(model_base_key(alias_base)))
+    return out
+
+
 def pack_recommended_target_name(cfg, pack):
     """The pack's recommended target as a selectable character name, or DEFAULT when
     the recommended character is the pack's own (baked) model."""
@@ -609,6 +690,17 @@ def find_known_target_mdl(target):
         os.path.join(r"C:\Users\user\Desktop\Female_Shuichi_Addon_Extracts\2562456244_PlayerModels_ST", *model_rel.split("/")),
         os.path.join(r"C:\Users\user\Desktop\GMod_Override_Manager\overrides", *model_rel.split("/")),
     ]
+    for cache_root in (os.path.join(APP_DIR, "workshop_extracts"), os.path.join(APP_DIR, "debug_extracts")):
+        if not os.path.isdir(cache_root):
+            continue
+        children = [
+            os.path.join(cache_root, name)
+            for name in os.listdir(cache_root)
+            if os.path.isdir(os.path.join(cache_root, name))
+        ]
+        children.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        for child in children:
+            candidates.append(os.path.join(child, *model_rel.split("/")))
     for path in candidates:
         if os.path.exists(path):
             return path
@@ -756,7 +848,7 @@ def target_model_slot(cfg, pack, target_name):
     else:
         t = find_target(cfg, target_name)
         base = t["model_base"] if t else ""
-    return path_without_ext(normalize_game_path(base)) if base else ""
+    return canonical_model_slot(base) if base else ""
 
 
 def pack_target_preferences(cfg, pack, primary_name):
@@ -2037,7 +2129,23 @@ def patch_mdl_add_missing_attachments(copied_mdl, target_reference_mdl):
     return True
 
 
+def pack_enables_binary_model_patches(pack):
+    """MDL/VTX/VVD rewrites are opt-in because some packs break visually when
+    their baked bodygroup layout is reshuffled to match Shinri's slider slots."""
+    try:
+        data = read_override_json(pack.get("folder", ""))
+    except Exception:
+        return False
+    return bool(
+        data.get("enable_model_alignment")
+        or data.get("enable_bodygroup_alignment")
+        or data.get("force_bodygroup_compat")
+    )
+
+
 def patch_retargeted_model_bodygroup_names(dest_folder, pack, target, source):
+    if not pack_enables_binary_model_patches(pack):
+        return False
     copied_mdl = mdl_path_from_base(dest_folder, target.get("model_base", ""))
     target_reference_mdl = find_known_target_mdl(target)
     source_mdl = mdl_path_from_base(pack["folder"], source.get("model_base", ""))
@@ -2064,6 +2172,8 @@ def vtx_paths_for_mdl(mdl_path):
 
 
 def patch_default_model_bodygroup_names(dest_folder, pack, source):
+    if not pack_enables_binary_model_patches(pack):
+        return False
     # Same idea as patch_retargeted_model_bodygroup_names, for a Default (no retarget)
     # install: label the pack's own sliders with the names the live server-native model
     # actually uses at that slot, relocating any dead (unreachable) slider onto a real
@@ -2577,12 +2687,17 @@ def enable(cfg, pack, target=None):
             source = infer_source_target(pack["folder"])
             if not source.get("model_base"):
                 raise ValueError("Could not infer this pack's source model path for retargeting.")
-            copy_pack_tree(pack["folder"], dest, source, target)
-            patch_retargeted_model_bodygroup_names(dest, pack, target, source)
-            write_bodygroup_compat_lua(dest, pack, target, source)
+            for install_target in target_install_variants(cfg, target) or [target]:
+                copy_pack_tree(pack["folder"], dest, source, install_target)
+                patch_retargeted_model_bodygroup_names(dest, pack, install_target, source)
+                write_bodygroup_compat_lua(dest, pack, install_target, source)
         else:
             source = infer_source_target(pack["folder"])
-            copy_pack_tree(pack["folder"], dest, source, source)
+            for install_target in target_install_variants(cfg, source) or [source]:
+                copy_pack_tree(pack["folder"], dest, source, install_target)
+                if source.get("model_base") and not same_model_base(install_target.get("model_base"), source.get("model_base")):
+                    patch_retargeted_model_bodygroup_names(dest, pack, install_target, source)
+                    write_bodygroup_compat_lua(dest, pack, install_target, source)
             if source.get("model_base"):
                 patch_default_model_bodygroup_names(dest, pack, source)
                 compat_target = dict(source)
@@ -2603,9 +2718,40 @@ def disable(cfg, pack):
 
 
 def read_json_url(url):
+    raw = read_github_raw_json(url)
+    if raw is not None:
+        return raw
     req = urllib.request.Request(url, headers={"User-Agent": "GModOverrideManager/1.0"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = resp.read(2_000_000)
+    return json.loads(data.decode("utf-8"))
+
+
+def read_github_raw_json(url):
+    parsed = urllib.parse.urlparse(url)
+    parts = parsed.path.strip("/").split("/")
+    if parsed.netloc.lower() != "raw.githubusercontent.com" or len(parts) < 4:
+        return None
+    owner, repo, ref = parts[:3]
+    path = "/".join(parts[3:])
+    if not path.lower().endswith(".json"):
+        return None
+    api = "https://api.github.com/repos/%s/%s/contents/%s?ref=%s" % (
+        urllib.parse.quote(owner, safe=""),
+        urllib.parse.quote(repo, safe=""),
+        urllib.parse.quote(path),
+        urllib.parse.quote(ref, safe=""),
+    )
+    req = urllib.request.Request(api, headers={
+        "User-Agent": "GModOverrideManager/1.0",
+        "Accept": "application/vnd.github+json",
+    })
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        payload = json.loads(resp.read(4_000_000).decode("utf-8"))
+    content = payload.get("content")
+    if not content:
+        return None
+    data = base64.b64decode(content)
     return json.loads(data.decode("utf-8"))
 
 
@@ -2740,6 +2886,7 @@ def normalize_community_index(data):
         out.append({
             "name": name,
             "character": str(item.get("character") or "(unspecified)"),
+            "recommended_target": str(item.get("recommended_target") or ""),
             "skin": str(item.get("skin") or item.get("version") or ""),
             "version": str(item.get("version") or ""),
             "author": str(item.get("author") or ""),
@@ -2805,9 +2952,214 @@ def install_community_pack(pack):
             "character": pack.get("character") or "(unspecified)",
             "skin": pack.get("skin") or pack.get("version") or "Community pack",
             "description": pack.get("description") or "",
+            "recommended_target": pack.get("recommended_target") or "",
         }
         json.dump(meta, open(override_json, "w", encoding="utf-8"), indent=2)
     return final_dir
+
+
+def parse_github_raw_url(url):
+    parsed = urllib.parse.urlparse(url)
+    parts = parsed.path.strip("/").split("/")
+    if parsed.netloc.lower() != "raw.githubusercontent.com" or len(parts) < 4:
+        return None
+    return {
+        "owner": parts[0],
+        "repo": parts[1],
+        "branch": parts[2],
+        "path": "/".join(parts[3:]),
+    }
+
+
+def github_raw_url(info, path=None):
+    target_path = normalize_game_path(path if path is not None else info.get("path", "community_packs.json"))
+    return "https://raw.githubusercontent.com/%s/%s/%s/%s" % (
+        urllib.parse.quote(info["owner"], safe=""),
+        urllib.parse.quote(info["repo"], safe=""),
+        urllib.parse.quote(info["branch"], safe=""),
+        "/".join(urllib.parse.quote(part) for part in target_path.split("/")),
+    )
+
+
+def publish_index_url(cfg):
+    return (cfg.get("community_publish_index_url") or cfg.get("community_index_url") or DEFAULT_COMMUNITY_INDEX_URL).strip()
+
+
+def github_index_info(cfg):
+    info = parse_github_raw_url(publish_index_url(cfg))
+    if info:
+        return info
+    raise ValueError(
+        "Publishing needs a raw GitHub index URL, for example:\n"
+        "https://raw.githubusercontent.com/OWNER/REPO/main/community_packs.json"
+    )
+
+
+def run_cmd_checked(args, cwd=None, timeout=120):
+    proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    if proc.returncode != 0:
+        msg = (proc.stderr or proc.stdout or "Command failed.").strip()
+        raise RuntimeError(msg)
+    return (proc.stdout or "").strip()
+
+
+def git_toplevel(path):
+    if not path:
+        return ""
+    try:
+        return run_cmd_checked(["git", "-C", path, "rev-parse", "--show-toplevel"], timeout=20)
+    except Exception:
+        return ""
+
+
+def git_origin_matches(repo_path, owner, repo):
+    try:
+        remote = run_cmd_checked(["git", "-C", repo_path, "remote", "get-url", "origin"], timeout=20).lower()
+    except Exception:
+        return False
+    marker = f"{owner.lower()}/{repo.lower()}"
+    return marker in remote.replace("\\", "/")
+
+
+def find_community_repo_path(cfg):
+    info = github_index_info(cfg)
+    home = os.path.expanduser("~")
+    candidates = [
+        cfg.get("community_repo_path", ""),
+        APP_DIR,
+        os.path.dirname(APP_DIR),
+        os.path.join(home, "Desktop", "backup shinri", "gmod-override-manager-repo"),
+        os.path.join(home, "Desktop", "gmod-override-manager-repo"),
+        os.path.join(home, "source", "shinri-trial-override-manager"),
+        os.path.join(home, "Documents", "shinri-trial-override-manager"),
+    ]
+    for candidate in candidates:
+        if not candidate or not os.path.isdir(candidate):
+            continue
+        top = git_toplevel(candidate)
+        if top and git_origin_matches(top, info["owner"], info["repo"]):
+            cfg["community_repo_path"] = top
+            save_config(cfg)
+            return top
+    raise FileNotFoundError(
+        "Could not find the GitHub repo clone for %s/%s. Set it with Publisher Settings." %
+        (info["owner"], info["repo"])
+    )
+
+
+def git_current_branch(repo_path, fallback):
+    try:
+        branch = run_cmd_checked(["git", "-C", repo_path, "branch", "--show-current"], timeout=20)
+        return branch or fallback
+    except Exception:
+        return fallback
+
+
+def pack_zip_filename(pack_name, existing_entry=None):
+    if existing_entry:
+        old_url = str(existing_entry.get("download_url") or "")
+        basename = os.path.basename(urllib.parse.urlparse(old_url).path)
+        if basename.lower().endswith(".zip"):
+            return urllib.parse.unquote(basename)
+    cleaned = re.sub(r"[^A-Za-z0-9]+", ".", str(pack_name or "")).strip(".")
+    return (cleaned or "Community.Pack") + ".zip"
+
+
+def zip_override_pack(pack, zip_path):
+    folder = pack.get("folder") or ""
+    if not os.path.isdir(folder):
+        raise FileNotFoundError("Selected override folder is missing.")
+    os.makedirs(os.path.dirname(zip_path), exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(folder):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for filename in files:
+                if filename.endswith((".pyc", ".pyo")):
+                    continue
+                src = os.path.join(root, filename)
+                rel = normalize_game_path(os.path.relpath(src, folder))
+                zf.write(src, rel)
+
+
+def load_community_index_file(index_path):
+    if not os.path.exists(index_path):
+        return {"packs": []}
+    data = json.load(open(index_path, encoding="utf-8"))
+    if isinstance(data, list):
+        return {"packs": data}
+    if not isinstance(data, dict):
+        return {"packs": []}
+    packs = data.get("packs")
+    if not isinstance(packs, list):
+        data["packs"] = []
+    return data
+
+
+def upsert_community_entry(index_data, entry):
+    packs = index_data.setdefault("packs", [])
+    for i, item in enumerate(packs):
+        if isinstance(item, dict) and item.get("name") == entry.get("name"):
+            merged = dict(item)
+            merged.update(entry)
+            packs[i] = merged
+            return
+    packs.append(entry)
+
+
+def write_community_index_file(index_path, index_data):
+    os.makedirs(os.path.dirname(index_path), exist_ok=True)
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(index_data, f, indent=2)
+        f.write("\n")
+
+
+def community_entry_from_pack(pack, existing_entry, zip_name, recommended_target, info):
+    meta = read_override_json(pack.get("folder", ""))
+    name = str(meta.get("name") or pack.get("name") or "").strip()
+    character = str(meta.get("character") or pack.get("character") or "(unspecified)").strip()
+    rec = (recommended_target or "").strip()
+    if not rec or rec == DEFAULT_TARGET_NAME:
+        rec = str(meta.get("recommended_target") or pack.get("recommended_target") or character).strip()
+    raw_path = f"{COMMUNITY_PACKS_DIRNAME}/{zip_name}"
+    return {
+        "name": name,
+        "character": character,
+        "recommended_target": rec,
+        "skin": str(meta.get("skin") or pack.get("skin") or "Community pack"),
+        "version": str((existing_entry or {}).get("version") or meta.get("version") or "0.1.0"),
+        "author": str((existing_entry or {}).get("author") or meta.get("author") or info.get("owner") or COMMUNITY_GITHUB_OWNER),
+        "description": str(meta.get("description") or pack.get("description") or ""),
+        "download_url": github_raw_url(info, raw_path),
+    }
+
+
+def publish_community_update(cfg, pack, recommended_target, include_zip):
+    repo_path = find_community_repo_path(cfg)
+    info = github_index_info(cfg)
+    info["branch"] = git_current_branch(repo_path, info.get("branch") or COMMUNITY_GITHUB_BRANCH)
+    info["path"] = normalize_game_path(info.get("path") or "community_packs.json")
+    index_path = os.path.join(repo_path, *info["path"].split("/"))
+    index_data = load_community_index_file(index_path)
+    existing = next((p for p in index_data.get("packs", []) if isinstance(p, dict) and p.get("name") == pack.get("name")), None)
+    zip_name = pack_zip_filename(pack.get("name"), existing)
+    if include_zip:
+        zip_override_pack(pack, os.path.join(repo_path, COMMUNITY_PACKS_DIRNAME, zip_name))
+    entry = community_entry_from_pack(pack, existing, zip_name, recommended_target, info)
+    upsert_community_entry(index_data, entry)
+    write_community_index_file(index_path, index_data)
+
+    paths = [info["path"]]
+    if include_zip:
+        paths.append(os.path.join(COMMUNITY_PACKS_DIRNAME, zip_name))
+    run_cmd_checked(["git", "-C", repo_path, "add", "--"] + paths, timeout=60)
+    staged = run_cmd_checked(["git", "-C", repo_path, "diff", "--cached", "--name-only"], timeout=60)
+    if not staged:
+        return f"No GitHub changes for '{entry['name']}'."
+    action = "Publish" if include_zip else "Update"
+    run_cmd_checked(["git", "-C", repo_path, "commit", "-m", f"{action} community pack {entry['name']}"], timeout=120)
+    run_cmd_checked(["git", "-C", repo_path, "push"], timeout=300)
+    commit = run_cmd_checked(["git", "-C", repo_path, "rev-parse", "--short", "HEAD"], timeout=20)
+    return f"{action}ed '{entry['name']}' to GitHub ({commit})."
 
 
 def workshop_item_id(value):
@@ -3542,6 +3894,7 @@ class App(tk.Tk):
         ttk.Button(bot, text="Override Maker", command=self.override_maker).pack(side="left")
         ttk.Button(bot, text="Community Packs", command=self.community_packs).pack(side="left")
         ttk.Button(bot, text="Best Target", command=self.compat_report).pack(side="left")
+        ttk.Button(bot, text="VTF Viewer", command=self.vtf_viewer).pack(side="left")
         ttk.Button(bot, text="Refresh", command=self.refresh).pack(side="right")
         ttk.Button(bot, text="Tutorial", command=self.show_tutorial).pack(side="right", padx=4)
 
@@ -3574,6 +3927,12 @@ class App(tk.Tk):
         bot4 = ttk.Frame(self, padding=(8, 0, 8, 8))
         bot4.pack(fill="x")
         ttk.Label(bot4, text=f"Version {APP_VERSION}", foreground="#777").pack(side="left")
+        ttk.Button(bot4, text="Update GitHub Index",
+                   command=lambda: self.publish_selected_community(include_zip=False)).pack(side="left", padx=8)
+        ttk.Button(bot4, text="Publish Selected Pack",
+                   command=lambda: self.publish_selected_community(include_zip=True)).pack(side="left")
+        ttk.Button(bot4, text="Publisher Settings",
+                   command=self.publisher_settings).pack(side="left", padx=8)
         ttk.Button(bot4, text="Check for Updates",
                    command=lambda: self.start_update_check(manual=True)).pack(side="right")
         self.update_status = tk.StringVar(value="")
@@ -3656,6 +4015,249 @@ class App(tk.Tk):
             os.startfile(OVERRIDES_DIR)  # noqa (Windows)
         except Exception:
             messagebox.showinfo("Overrides folder", OVERRIDES_DIR)
+
+    def vtf_viewer(self):
+        if SrcVTF is None:
+            messagebox.showerror(
+                "VTF Viewer",
+                "This feature needs the 'srctools' package.\n\nInstall it with:\n    pip install srctools",
+            )
+            return
+
+        THUMB = 120
+        PREVIEW = 440
+        MAX_FILES = 1500
+        COLUMNS = 5
+
+        win = tk.Toplevel(self)
+        win.title("VTF Sprite Viewer")
+        win.geometry("1000x640")
+        win.minsize(760, 480)
+
+        top = ttk.Frame(win, padding=8)
+        top.pack(fill="x")
+        ttk.Label(top, text="Folder:").pack(side="left")
+        folder_var = tk.StringVar(value="")
+        ttk.Entry(top, textvariable=folder_var).pack(side="left", fill="x", expand=True, padx=6)
+        recursive_var = tk.BooleanVar(value=True)
+
+        def browse():
+            start = folder_var.get().strip() or None
+            if not start:
+                sel = self.selected()
+                if sel:
+                    cand = os.path.join(sel.get("folder", ""), "materials")
+                    start = cand if os.path.isdir(cand) else sel.get("folder", "") or None
+            d = filedialog.askdirectory(title="Select a folder of VTF sprites", initialdir=start)
+            if d:
+                folder_var.set(d)
+                start_scan(d)
+
+        ttk.Button(top, text="Browse...", command=browse).pack(side="left")
+        ttk.Checkbutton(
+            top, text="Include subfolders", variable=recursive_var,
+            command=lambda: start_scan(folder_var.get()) if folder_var.get() else None,
+        ).pack(side="left", padx=6)
+
+        status_var = tk.StringVar(value="Pick a folder to scan for .vtf files.")
+        ttk.Label(win, textvariable=status_var, foreground="#666", padding=(8, 0, 8, 4)).pack(fill="x")
+
+        body = ttk.Frame(win)
+        body.pack(fill="both", expand=True)
+
+        grid_wrap = ttk.Frame(body)
+        grid_wrap.pack(side="left", fill="both", expand=True)
+        canvas = tk.Canvas(grid_wrap, background="white", highlightthickness=0)
+        vsb = ttk.Scrollbar(grid_wrap, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, background="white")
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def on_inner_configure(_e=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        inner.bind("<Configure>", on_inner_configure)
+
+        def on_canvas_configure(e):
+            canvas.itemconfig(inner_id, width=e.width)
+        canvas.bind("<Configure>", on_canvas_configure)
+
+        def on_wheel(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", on_wheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        preview = ttk.Frame(body, padding=8, width=280)
+        preview.pack(side="right", fill="y")
+        preview.pack_propagate(False)
+        preview_img = tk.Label(preview, background="white", relief="solid", borderwidth=1)
+        preview_img.pack(pady=(0, 8))
+        preview_info = tk.StringVar(value="Click a sprite to preview it here.")
+        ttk.Label(preview, textvariable=preview_info, foreground="#444", justify="left",
+                  wraplength=260).pack(anchor="n", fill="x")
+
+        def pick_frame(vtf_obj, target):
+            frame = vtf_obj.get(frame=0, mipmap=0)
+            mip = 0
+            while frame.width > target and frame.height > target:
+                try:
+                    nxt = vtf_obj.get(frame=0, mipmap=mip + 1)
+                except KeyError:
+                    break
+                mip += 1
+                frame = nxt
+            return frame
+
+        def photo_from_frame(frame, max_side):
+            photo = frame.to_tkinter(win, bg=(255, 255, 255))
+            w, h = max(frame.width, 1), max(frame.height, 1)
+            if max(w, h) > max_side:
+                factor = max(1, round(max(w, h) / max_side))
+                photo = photo.subsample(factor, factor)
+            elif max(w, h) * 2 <= max_side:
+                factor = max(1, max_side // (2 * max(w, h)))
+                if factor > 1:
+                    photo = photo.zoom(factor, factor)
+            return photo
+
+        def show_preview(path, relpath):
+            try:
+                with open(path, "rb") as f:
+                    vtf_obj = SrcVTF.read(f)
+                    frame = pick_frame(vtf_obj, PREVIEW)
+                    frame.load()
+            except Exception as e:
+                preview_img.configure(image="", text="(failed to decode)")
+                preview_img.image = None
+                preview_info.set(f"{relpath}\n\n{e}")
+                return
+            photo = photo_from_frame(frame, PREVIEW)
+            preview_img.configure(image=photo, text="")
+            preview_img.image = photo
+            try:
+                size_kb = os.path.getsize(path) / 1024.0
+            except OSError:
+                size_kb = 0.0
+            flag_str = str(vtf_obj.flags).replace("VTFFlags.", "")
+            preview_info.set(
+                f"{relpath}\n\n"
+                f"{vtf_obj.width} x {vtf_obj.height}\n"
+                f"Format: {vtf_obj.format.name}\n"
+                f"VTF version: {vtf_obj.version[0]}.{vtf_obj.version[1]}\n"
+                f"Frames: {vtf_obj.frame_count}\n"
+                f"Flags: {flag_str}\n"
+                f"File size: {size_kb:.1f} KB"
+            )
+
+        thumb_cells = []
+        scan_state = {"token": 0}
+        result_queue = queue.Queue()
+
+        def clear_grid():
+            for child in inner.winfo_children():
+                child.destroy()
+            thumb_cells.clear()
+            canvas.yview_moveto(0)
+
+        def add_cell(path, relpath, frame, error):
+            idx = len(thumb_cells)
+            cell = tk.Frame(inner, background="white", padx=4, pady=4)
+            cell.grid(row=idx // COLUMNS, column=idx % COLUMNS, sticky="n")
+            thumb_lbl = tk.Label(cell, background="white", relief="solid", borderwidth=1,
+                                  width=16, height=7)
+            thumb_lbl.pack()
+            caption = ttk.Label(cell, text=os.path.basename(path), wraplength=THUMB + 10,
+                                 justify="center", font=("Segoe UI", 8))
+            caption.pack()
+            thumb_cells.append(cell)
+            if error is not None:
+                thumb_lbl.configure(text="(failed)", foreground="#a05")
+            else:
+                photo = photo_from_frame(frame, THUMB)
+                thumb_lbl.configure(image=photo)
+                thumb_lbl.image = photo
+            for widget in (cell, thumb_lbl, caption):
+                widget.bind("<Button-1>", lambda e, p=path, r=relpath: show_preview(p, r))
+
+        def scan_worker(folder, recursive, token):
+            files = []
+            try:
+                if recursive:
+                    for root, _dirs, names in os.walk(folder):
+                        for n in names:
+                            if n.lower().endswith(".vtf"):
+                                files.append(os.path.join(root, n))
+                        if len(files) >= MAX_FILES:
+                            break
+                else:
+                    for n in sorted(os.listdir(folder)):
+                        if n.lower().endswith(".vtf"):
+                            files.append(os.path.join(folder, n))
+            except OSError as e:
+                result_queue.put(("error", token, str(e)))
+                return
+            files = files[:MAX_FILES]
+            files.sort()
+            result_queue.put(("count", token, len(files)))
+            for path in files:
+                if scan_state["token"] != token:
+                    return
+                relpath = os.path.relpath(path, folder)
+                try:
+                    with open(path, "rb") as f:
+                        vtf_obj = SrcVTF.read(f)
+                        frame = pick_frame(vtf_obj, THUMB)
+                        frame.load()
+                    result_queue.put(("item", token, path, relpath, frame, None))
+                except Exception as e:
+                    result_queue.put(("item", token, path, relpath, None, str(e)))
+            result_queue.put(("done", token, None))
+
+        def poll_queue():
+            if not win.winfo_exists():
+                return
+            try:
+                while True:
+                    msg = result_queue.get_nowait()
+                    kind, token = msg[0], msg[1]
+                    if token != scan_state["token"]:
+                        continue
+                    if kind == "count":
+                        total = msg[2]
+                        suffix = f" (showing first {MAX_FILES})" if total >= MAX_FILES else ""
+                        status_var.set(f"Found {total} .vtf file(s){suffix}. Loading...")
+                    elif kind == "item":
+                        _, _, path, relpath, frame, err = msg
+                        add_cell(path, relpath, frame, err)
+                    elif kind == "error":
+                        status_var.set(f"Could not read folder: {msg[2]}")
+                    elif kind == "done":
+                        on_inner_configure()
+                        n = len(thumb_cells)
+                        status_var.set(
+                            f"Loaded {n} sprite(s) from {folder_var.get()}" if n
+                            else "No .vtf files found in that folder."
+                        )
+            except queue.Empty:
+                pass
+            win.after(60, poll_queue)
+
+        def start_scan(folder):
+            if not folder or not os.path.isdir(folder):
+                status_var.set("Not a valid folder.")
+                return
+            scan_state["token"] += 1
+            token = scan_state["token"]
+            clear_grid()
+            preview_info.set("Click a sprite to preview it here.")
+            preview_img.configure(image="", text="")
+            preview_img.image = None
+            status_var.set("Scanning...")
+            threading.Thread(target=scan_worker, args=(folder, recursive_var.get(), token),
+                              daemon=True).start()
+
+        win.after(60, poll_queue)
 
     def override_maker(self, edit_pack=None):
         edit_pack = edit_pack or None
@@ -4078,7 +4680,8 @@ class App(tk.Tk):
             if p.get("author"):
                 bits.append(f"by {p['author']}")
             desc = p.get("description") or "(no description)"
-            detail.set(f"{' - '.join(bits)}\nOverrides: {p.get('character')} ({p.get('skin')})\n{desc}")
+            rec = p.get("recommended_target") or p.get("character") or DEFAULT_TARGET_NAME
+            detail.set(f"{' - '.join(bits)}\nOverrides: {p.get('character')} ({p.get('skin')})\nRecommended: {rec}\n{desc}")
 
         def load_index():
             url = url_var.get().strip()
@@ -4137,8 +4740,102 @@ class App(tk.Tk):
         bot.pack(fill="x")
         ttk.Button(bot, text="Refresh", command=load_index).pack(side="left")
         ttk.Button(bot, text="Install Selected", command=install_selected).pack(side="left", padx=4)
+        ttk.Button(bot, text="Publisher Settings", command=self.publisher_settings).pack(side="left")
         ttk.Button(bot, text="Close", command=win.destroy).pack(side="right")
         win.after(100, load_index)
+
+    def publisher_settings(self):
+        win = tk.Toplevel(self)
+        win.title("Publisher Settings")
+        win.geometry("760x220")
+        win.minsize(620, 200)
+        win.transient(self)
+
+        publish_url = tk.StringVar(value=publish_index_url(self.cfg))
+        repo_path = tk.StringVar(value=self.cfg.get("community_repo_path", ""))
+        status = tk.StringVar(value="")
+
+        body = ttk.Frame(win, padding=10)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Raw GitHub index URL:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(body, textvariable=publish_url).grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(body, text="Use Install URL",
+                   command=lambda: publish_url.set(self.cfg.get("community_index_url", DEFAULT_COMMUNITY_INDEX_URL))
+                   ).grid(row=0, column=2, sticky="ew")
+
+        ttk.Label(body, text="Local repo folder:").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(body, textvariable=repo_path).grid(row=1, column=1, sticky="ew", padx=6, pady=(8, 0))
+
+        def browse_repo():
+            initial = repo_path.get().strip() or os.path.expanduser("~")
+            chosen = filedialog.askdirectory(title="Select local GitHub repo folder", initialdir=initial, parent=win)
+            if chosen:
+                repo_path.set(chosen)
+
+        ttk.Button(body, text="Browse", command=browse_repo).grid(row=1, column=2, sticky="ew", pady=(8, 0))
+        ttk.Label(
+            body,
+            text="Publish writes the ZIP and JSON into this local clone, commits, and pushes to the repo named by the URL.",
+            foreground="#666",
+            wraplength=690,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ttk.Label(body, textvariable=status, foreground="#a05").grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        body.columnconfigure(1, weight=1)
+
+        def save_settings():
+            url = publish_url.get().strip()
+            info = parse_github_raw_url(url)
+            if not info or not info.get("path", "").lower().endswith(".json"):
+                status.set("Use a raw GitHub JSON URL, e.g. https://raw.githubusercontent.com/OWNER/REPO/main/community_packs.json")
+                return
+            repo = repo_path.get().strip()
+            if repo:
+                top = git_toplevel(repo)
+                if not top:
+                    status.set("Local repo folder must be inside a git repository.")
+                    return
+                if not git_origin_matches(top, info["owner"], info["repo"]):
+                    status.set("That repo folder does not match %s/%s." % (info["owner"], info["repo"]))
+                    return
+                repo = top
+            self.cfg["community_publish_index_url"] = url
+            if repo:
+                self.cfg["community_repo_path"] = repo
+            save_config(self.cfg)
+            status.set("Saved publisher settings.")
+            self.note.set("Publisher settings saved.")
+
+        buttons = ttk.Frame(win, padding=(10, 0, 10, 10))
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Save", command=save_settings).pack(side="right")
+        ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right", padx=6)
+
+    def publish_selected_community(self, include_zip):
+        p = self.selected()
+        if not p:
+            messagebox.showinfo("Publish Community Pack", "Select an override in the list first.")
+            return
+        target_name = self.selected_target_name()
+        verb = "Publishing" if include_zip else "Updating GitHub index for"
+        self.note.set(f"{verb} {p['name']}...")
+        self.update_idletasks()
+
+        def work():
+            try:
+                msg = publish_community_update(self.cfg, dict(p), target_name, include_zip)
+                self.community_index = None
+                self.after(0, lambda: (
+                    self.note.set(msg),
+                    messagebox.showinfo("Community Packs", msg)
+                ))
+            except Exception as e:
+                msg = str(e)
+                self.after(0, lambda: (
+                    self.note.set(msg),
+                    messagebox.showerror("Community Packs", msg)
+                ))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def recommended_label(self, pack):
         """Friendly label for the pack's recommended character, e.g.
