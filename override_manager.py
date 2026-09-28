@@ -377,6 +377,7 @@ CHARACTER_TARGETS = [
     make_target("Hajime Hinata", "models/dro/player/characters2/char1/char1.mdl", "models/dro/player/characters2/char1/c_arms/char1_arms.mdl"),
     make_target("Hifumi Yamada", "models/dro/player/characters1/char13/char13.mdl", "models/dro/player/characters1/char13/c_arms/char13_arms.mdl"),
     make_target("Himiko Yumeno", "models/dro/player/characters3/char12/char12.mdl", "models/dro/player/characters3/char12/c_arms/char12_arms.mdl"),
+    make_target("Hiyoko Saionji", "models/dro/player/characters2/char12/char12.mdl", "models/dro/player/characters2/char12/c_arms/char12_arms.mdl"),
     make_target("Ibuki Mioda", "models/dro/player/characters2/char5/char5.mdl", "models/dro/player/characters2/char5/c_arms/char5_arms.mdl"),
     make_target("Junko Enoshima (Default)", "models/dro/player/characters1/char9/char9.mdl", "models/dro/player/characters1/char9/c_arms/char9_arms.mdl"),
     make_target("K1-B0", "models/dro/player/characters3/char3/char3.mdl", "models/dro/player/characters3/char3/c_arms/char3_arms.mdl"),
