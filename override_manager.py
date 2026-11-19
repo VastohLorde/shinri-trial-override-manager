@@ -59,7 +59,7 @@ OLD_COMMUNITY_INDEX_URLS = {
 # Cloud presence backend (Cloudflare Worker - see presence_worker.js). Baked in so
 # all app users share it with zero config. Empty string = cloud presence disabled.
 DEFAULT_PRESENCE_URL = ""
-APP_VERSION = "1.26"
+APP_VERSION = "1.27"
 RELEASES_API_URL = "https://api.github.com/repos/VastohLorde/shinri-trial-override-manager/releases/latest"
 RELEASES_PAGE_URL = "https://github.com/VastohLorde/shinri-trial-override-manager/releases/latest"
 UPDATE_ASSET_NAME = "GMod_Override_Manager.zip"
@@ -390,7 +390,9 @@ CHARACTER_TARGETS = [
     make_target("Himiko Yumeno", "models/dro/player/characters3/char12/char12.mdl", "models/dro/player/characters3/char12/c_arms/char12_arms.mdl"),
     make_target("Hiyoko Saionji", "models/dro/player/characters2/char12/char12.mdl", "models/dro/player/characters2/char12/c_arms/char12_arms.mdl"),
     make_target("Ibuki Mioda", "models/dro/player/characters2/char5/char5.mdl", "models/dro/player/characters2/char5/c_arms/char5_arms.mdl"),
+    make_target("Jataro Kemuri", "models/dro/player/characters4/char2/char2.mdl", "models/dro/player/characters4/char2/c_arms/char2_arms.mdl", "materials/dro/sprites/characters/dr_ae/jataro kemuri"),
     make_target("Junko Enoshima (Default)", "models/dro/player/characters1/char9/char9.mdl", "models/dro/player/characters1/char9/c_arms/char9_arms.mdl"),
+    make_target("Junko Enoshima (Fake)", "models/dro/player/characters1/char9/char9_fake.mdl", "models/dro/player/characters1/char9/c_arms/char9_arms.mdl", "materials/dro/sprites/characters/dr_1/junko enoshima (fake)"),
     make_target("K1-B0", "models/dro/player/characters3/char3/char3.mdl", "models/dro/player/characters3/char3/c_arms/char3_arms.mdl"),
     make_target("Kaede Akamatsu", "models/dro/player/characters3/char8/char8.mdl", "models/dro/player/characters3/char8/c_arms/char8_arms.mdl"),
     make_target("Kaito Momota", "models/dro/player/characters3/char4/char4.mdl", "models/dro/player/characters3/char4/c_arms/char4_arms.mdl"),
@@ -400,25 +402,38 @@ CHARACTER_TARGETS = [
     make_target("Kokichi Oma Beta Uniform", "models/dro/player/characters3/char2/char2_beta.mdl", "models/dro/player/characters3/char2/c_arms/char2_beta_arms.mdl"),
     make_target("Kokichi Oma School Uniform", "models/dro/player/characters3/char2/char2_uniform.mdl", "models/dro/player/characters3/char2/c_arms/char2_school_arms.mdl"),
     make_target("Kokichi Oma Ultimate Uniform", "models/dro/player/characters3/char2/char2.mdl", "models/dro/player/characters3/char2/c_arms/char2_arms.mdl"),
+    make_target("Komaru Naegi", "models/dro/player/characters4/char1/char1.mdl", "models/dro/player/characters4/char1/c_arms/char1_arms.mdl", "materials/dro/sprites/characters/dr_ae/komaru naegi"),
     make_target("Korekiyo Shinguji", "models/dro/player/characters3/char6/char6.mdl", "models/dro/player/characters3/char6/c_arms/char6_arms.mdl"),
-    make_target("Korekiyo Shinguji New", "models/dro/player/characters3/korekiyo_shinguji/korekiyo_shinguji.mdl", "models/dro/player/characters3/korekiyo_shinguji/c_arms/korekiyo_shinguji_arms.mdl", "materials/dro/sprites/characters/dr_v3/korekiyo shinguji"),
     make_target("Korekiyo Shinguji Anniversary", "models/dro/player/characters3/korekiyo_shinguji_anniversary/korekiyo_shinguji_anniversary.mdl", "models/dro/player/characters3/korekiyo_shinguji_anniversary/c_arms/korekiyo_shinguji_anniversary_arms.mdl", "materials/dro/sprites/characters/dr_v3/korekiyo shinguji"),
+    make_target("Korekiyo Shinguji New", "models/dro/player/characters3/korekiyo_shinguji/korekiyo_shinguji.mdl", "models/dro/player/characters3/korekiyo_shinguji/c_arms/korekiyo_shinguji_arms.mdl", "materials/dro/sprites/characters/dr_v3/korekiyo shinguji"),
     make_target("Korekiyo Shinguji Pregame", "models/dro/player/characters3/korekiyo_shinguji_pregame/korekiyo_shinguji_pregame.mdl", "models/dro/player/characters3/korekiyo_shinguji_pregame/c_arms/korekiyo_shinguji_pregame_arms.mdl", "materials/dro/sprites/characters/dr_v3/korekiyo shinguji"),
+    make_target("Kotoko Utsugi", "models/dro/player/characters4/char5/char5.mdl", "models/dro/player/characters4/char5/c_arms/char5_arms.mdl", "materials/dro/sprites/characters/dr_ae/kotoko utsugi"),
     make_target("Kyoko Kirigiri", "models/dro/player/characters1/char6/char6.mdl", "models/dro/player/characters1/char6/c_arms/char6_arms.mdl"),
     make_target("Leon Kuwata", "models/dro/player/characters1/char14/char14.mdl", "models/dro/player/characters1/char14/c_arms/char14_arms.mdl"),
     make_target("Mahiru Koizumi", "models/dro/player/characters2/char10/char10.mdl", "models/dro/player/characters2/char10/c_arms/char10_arms.mdl"),
     make_target("Maki Harukawa", "models/dro/player/characters3/char9/char9.mdl", "models/dro/player/characters3/char9/c_arms/char9_arms.mdl"),
     make_target("Makoto Naegi", "models/dro/player/characters1/char1/char1.mdl", "models/dro/player/characters1/char1/c_arms/char1_arms.mdl"),
+    make_target("Masaru Daimon", "models/dro/player/characters4/char3/char3.mdl", "models/dro/player/characters4/char3/c_arms/char3_arms.mdl", "materials/dro/sprites/characters/dr_ae/masaru daimon"),
     make_target("Mikan Tsumiki", "models/dro/player/characters2/char8/char8.mdl", "models/dro/player/characters2/char8/c_arms/char8_arms.mdl"),
     make_target("Miu Iruma", "models/dro/player/characters3/char11/char11.mdl", "models/dro/player/characters3/char11/c_arms/char11_arms.mdl"),
+    make_target("Monaca Towa", "models/dro/player/characters4/char6/char6.mdl", "models/dro/player/characters4/char6/c_arms/char6_arms.mdl", "materials/dro/sprites/characters/dr_ae/monaca towa"),
     make_target("Mondo Owada", "models/dro/player/characters1/char4/char4.mdl", "models/dro/player/characters1/char4/c_arms/char4_arms.mdl"),
+    make_target("Monodam", "models/dro/player/characters10/char5/char5.mdl", "models/dro/player/characters10/char5/c_arms/char5_arms.mdl", "materials/dro/sprites/characters/dr_monokumas/monodam"),
+    make_target("Monokid", "models/dro/player/characters10/char6/char6.mdl", "models/dro/player/characters10/char6/c_arms/char6_arms.mdl", "materials/dro/sprites/characters/dr_monokumas/monokid"),
+    make_target("Monokuma", "models/dro/player/characters10/char1/char1.mdl", "models/dro/player/characters10/char1/c_arms/char1_arms.mdl", "materials/dro/sprites/characters/dr_monokumas/monokuma"),
+    make_target("Monomi", "models/dro/player/characters10/char2/char2.mdl", "models/dro/player/characters10/char2/c_arms/char2_arms.mdl", "materials/dro/sprites/characters/dr_monokumas/monomi"),
+    make_target("Monophanie", "models/dro/player/characters10/char4/char4.mdl", "models/dro/player/characters10/char4/c_arms/char4_arms.mdl", "materials/dro/sprites/characters/dr_monokumas/monophanie"),
+    make_target("Monosuke", "models/dro/player/characters10/char3/char3.mdl", "models/dro/player/characters10/char3/c_arms/char3_arms.mdl", "materials/dro/sprites/characters/dr_monokumas/monosuke"),
+    make_target("Monotaro", "models/dro/player/characters10/char7/char7.mdl", "models/dro/player/characters10/char7/c_arms/char7_arms.mdl", "materials/dro/sprites/characters/dr_monokumas/monotaro"),
     make_target("Mukuro Ikusaba", "models/dro/player/characters1/char16/char16.mdl", "models/dro/player/characters1/char16/c_arms/char16_arms.mdl"),
     make_target("Mukuro Ikusaba 2", "models/dro/player/characters1/char16/char16_uniformhp.mdl", "models/dro/player/characters1/char16/c_arms/char16_arms.mdl"),
+    make_target("Nagisa Shingetsu", "models/dro/player/characters4/char4/char4.mdl", "models/dro/player/characters4/char4/c_arms/char4_arms.mdl", "materials/dro/sprites/characters/dr_ae/nagisa shingetsu"),
     make_target("Nagito Komaeda", "models/dro/player/characters2/char2/char2.mdl", "models/dro/player/characters2/char2/c_arms/char2_arms.mdl"),
     make_target("Nekomaru", "models/dro/player/characters2/char14/char14.mdl", "models/dro/player/characters2/char14/c_arms/char14_arms.mdl"),
     make_target("Peko Pekoyama", "models/dro/player/characters2/char9/char9.mdl", "models/dro/player/characters2/char9/c_arms/char9_arms.mdl"),
     make_target("Peko Pekoyama Male", "models/dro/player/characters2/peko_pekoyama_male/peko_pekoyama_male.mdl", "models/dro/player/characters2/peko_pekoyama_male/peko_pekoyama_male_arms.mdl", "materials/dro/sprites/characters/dr_2/peko pekoyama"),
     make_target("Rantaro Amami", "models/dro/player/characters3/char5/char5.mdl", "models/dro/player/characters3/char5/c_arms/char5_arms.mdl"),
+    make_target("Ryoko Otonashi", "models/dro/player/characters5/char1/char1.mdl", "models/dro/player/characters5/char1/c_arms/char1_arms.mdl", "materials/dro/sprites/characters/dr_zero/ryoko otonashi"),
     make_target("Ryoma Hoshi", "models/dro/player/characters3/char16/char16.mdl", "models/dro/player/characters3/char16/c_arms/char16_arms.mdl"),
     make_target("Sakura Ogami", "models/dro/player/characters1/char12/char12.mdl", "models/dro/player/characters1/char12/c_arms/char12_arms.mdl"),
     make_target("Sayaka Maizono", "models/dro/player/characters1/char7/char7.mdl", "models/dro/player/characters1/char7/c_arms/char7_arms.mdl"),
@@ -428,6 +443,7 @@ CHARACTER_TARGETS = [
     make_target("Teruteru Hanamura", "models/dro/player/characters2/char15/char15.mdl", "models/dro/player/characters2/char15/c_arms/char15_arms.mdl"),
     make_target("Toko Fukawa", "models/dro/player/characters1/char10/char10.mdl", "models/dro/player/characters1/char10/c_arms/arms.mdl"),
     make_target("Toko Fukawa (Genocide)", "models/dro/player/characters1/char10/char10_genocide.mdl", "models/dro/player/characters1/char10/c_arms/arms.mdl"),
+    make_target("Toko Fukawa New", "models/dro/player/characters1/toko_fukawa/toko_fukawa.mdl", "models/dro/player/characters1/char10/c_arms/arms.mdl", "materials/dro/sprites/characters/dr_1/toko fukawa"),
     make_target("Tsumugi Shirogane", "models/dro/player/characters3/char14/char14.mdl", "models/dro/player/characters3/char14/c_arms/char14_arms.mdl"),
     make_target("Yasuhiro Hagakure (Danganronpa)", "models/dro/player/characters1/char15/char15.mdl", "models/dro/player/characters1/char15/c_arms/char15_arms.mdl"),
 ]
